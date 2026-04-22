@@ -1,4 +1,4 @@
-<img width="480" height="480" alt="5134172295139101640" src="https://github.com/user-attachments/assets/1e18c38e-d4ed-4a4d-a51b-c0c3b2ab892b" />
+<img width="240" height="240" alt="5134172295139101640" src="https://github.com/user-attachments/assets/1e18c38e-d4ed-4a4d-a51b-c0c3b2ab892b" />
 
 # HermesDM — AI Dungeon Master via Telegram
 

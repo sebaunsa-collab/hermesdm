@@ -1,12 +1,19 @@
-# 🎲 HermesDM — AI Dungeon Master via Telegram
+# 🎲 HermesDM — Tu Dungeon Master con IA en Telegram
 
-> Tu Dungeon Master con IA corre **directo en Telegram**. Dados reales, hojas de personaje, combate por turnos, continuidad del mundo, narración con LLM, y generación de imágenes contextuales — todo sin salir de Telegram.
+<p align="center">
+<img width="600" alt="HermesDM Banner" src="https://i.imgur.com/placeholder-banner.png"/>
+<br/>
 
-![D&D 5e](https://img.shields.io/badge/D%26D-5e-960020?style=flat-square)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+> **¿Quién necesita D&D Beyond cuando podés tener un DM con IA corriendo en tu grupo de Telegram?**
+
+[![D&D 5e](https://img.shields.io/badge/D%26D-5e-960020?style=flat-square)](https://dnd.wizards.com/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=fff)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-274%20%E2%9C%85-brightgreen?style=flat-square)](tests/)
-[![GitHub PRs](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=flat-square)]()
+[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=flat-square&logo=telegram&logoColor=fff)](https://t.me/)
+[![Twitter](https://img.shields.io/badge/Author-@TheShugarBoy-1DA1F2?style=flat-square&logo=twitter&logoColor=fff)](https://twitter.com/TheShugarBoy)
+
+</p>
 
 ---
 
@@ -26,7 +33,23 @@
    🧙 Slots consumidos: Lv3 → 2 restantes
 ```
 
-**No necesitás Roll20, D&D Beyond, ni ninguna otra app. Solo Telegram.**
+**No necesitás Roll20, D&D Beyond, ni ninguna otra app. Solo Telegram.** 📱
+
+---
+
+## 🤔 Por qué HermesDM?
+
+| | Roll20 | D&D Beyond | **HermesDM** |
+|---|:---:|:---:|:---:|
+| 💰 Costo | ~$10/mes | ~$15/mes | **Gratis** |
+| 🎲 Dados reales | ⚠️ Manual | ⚠️ Manual | **Automático** |
+| 🧙 Spell slots | ⚠️ Manual | ✅ Automático | **✅ Automático** |
+| 🖼️ Imágenes | ❌ No tiene | ❌ No tiene | **✅ Auto-generadas** |
+| 📱 En Telegram | ❌ No | ❌ No | **✅ 100% Telegram** |
+| 💾 Persistencia | ⚠️ Sesión | ⚠️ Sesión | **✅ Entre sesiones** |
+| 🧠 Narración LLM | ❌ No | ❌ No | **✅ Sí** |
+
+> **Spoiler:** HermesDM no reemplaza una mesa de amigos. Pero si jugás solo o con gente que no tiene cara de dados, es otra historia. 👀
 
 ---
 
@@ -63,7 +86,7 @@
 │                    TELEGRAM                          │
 │   Sherman escribe: /j attack dragon                 │
 └─────────────────────┬───────────────────────────────┘
-                      │ Polling (getUpdates)
+                      │ 📬 Polling (getUpdates)
                       ▼
 ┌─────────────────────────────────────────────────────┐
 │              bot/telegram_handler.py                 │
@@ -85,14 +108,14 @@
         │  adapters/mode_b/      │
         │  action_router.py      │
         │  → Clasifica la acción │
-        │  →arma resultado unified│
+        │  → arma resultado unif │
         └────────────┬───────────┘
                      │
         ┌────────────┼────────────┐
         ▼            ▼            ▼
    ┌─────────┐ ┌──────────┐ ┌──────────┐
-   │  dice   │ │ narrative│ │ image_   │
-   │ roller  │ │ generator│ │ event_h..│
+   │  dice   │ │ narrative│ │ image_    │
+   │ roller  │ │ generator│ │ event_h.. │
    └────┬────┘ └────┬────┘ └────┬─────┘
         │           │           │
         │           ▼           │
@@ -106,10 +129,10 @@
                      ▼
         ┌────────────────────────┐
         │  Image Provider         │
-        │  (Pollinations/MiniMax/ │
-        │   Flux/NanoBanana)      │
+        │  (Pollinations/MiniMax/│
+        │   Flux/NanoBanana)     │
         └────────────┬───────────┘
-                     │ +5 min cooldown
+                     │ ⏱️ +5 min cooldown
                      ▼
               ┌──────────────┐
               │  Telegram    │
@@ -140,7 +163,7 @@
        │ → Check muerte (HP <= 0)
        ▼
 6. narrative_generator.generate_scene()
-       │ →arma prompt con: action, result, character, target, genre
+       │ → arma prompt con: action, result, character, target, genre
        │ → LLM → narración dramática del momento
        ▼
 7. image_event_handler.maybe_generate()
@@ -187,7 +210,7 @@
 ## ✨ Features
 
 | Feature | Status | Detalle |
-|---------|--------|---------|
+|---------|:------:|---------|
 | 🎲 **Dados reales** | ✅ | 1d4 → 1d20+, ventaja, desventaja, saves, crits |
 | 📋 **Hojas de personaje** | ✅ | HP, XP, inventario, condiciones, death saves |
 | 🧙 **Spell slots** | ✅ | Wizard, Cleric, Warlock, Paladin, Druid, Bard |
@@ -214,7 +237,7 @@ pip install -e .
 cp .env.example .env
 # ✏️  Editar .env y poner:
 #   TELEGRAM_BOT_TOKEN=tu_token_de_botfather
-#   MINIMAX_API_KEY=tu_key_de_minimax  (opcional, usa Pollinations si no está)
+#   MINIMAX_API_KEY=***  (opcional, usa Pollinations si no está)
 
 # 3. Correr
 hermesdm
@@ -225,10 +248,12 @@ hermesdm
 
 ### ⚙️ Requisitos
 
-- **Python 3.12+**
-- **Telegram Bot Token** → [@BotFather](https://t.me/BotFather)
-- **MiniMax API Key** (opcional) → [MiniMax](https://platform.minimaxi.com) — si no está, usa Pollinations (gratis)
-- **Token de OpenAI** (opcional) → para narración LLM más rica
+| Requisito | Necesario? |Dónde conseguirlo|
+|-----------|:----------:|----------------|
+| 🐍 **Python 3.12+** | ✅ Siempre | [python.org](https://www.python.org/) |
+| 📱 **Telegram Bot Token** | ✅ Siempre | [@BotFather](https://t.me/BotFather) |
+| 🎨 **MiniMax API Key** | ❌ Opcional | [MiniMax](https://platform.minimaxi.com) — si no está, usa Pollinations (gratis) |
+| 🤖 **OpenAI Token** | ❌ Opcional | [OpenAI](https://platform.openai.com/) — para narración LLM más rica |
 
 ---
 
@@ -339,7 +364,7 @@ Cuando ejecutás `/newgame`, elegís un género. Cada uno tiene system prompts �
 
 | Género | Vibe | Descripción |
 |--------|------|-------------|
-| 🏰 `fantasy` | Medieval | Aventuras de alta fantasía — dragones,魔法, quest épicos |
+| 🏰 `fantasy` | Medieval | Aventuras de alta fantasía — dragones, magia, quest épicos |
 | 🗝️ `dungeon` | Exploración | Mazmorras, puzzles, trampas, tesoros ocultos |
 | 🍺 `tavern` | Intriga | Missions políticas desde la taberna, RPG social |
 | 👻 `horror` | Terror | Horror psicológico, supervivencia, criaturas oscuras |
@@ -354,7 +379,7 @@ El DM genera imágenes **automáticamente** en momentos narrativamente important
 ### 🎯 Eventos que Disparan Imágenes
 
 | Evento | Imagen? | Por qué? |
-|--------|---------|----------|
+|--------|:-------:|----------|
 | 🎲 **Natural 20** (crítico) | ✅ | Momento épico — hay que mostrarlo |
 | 💀 **Natural 1** (pifia) | ✅ | Caos y humor — el LLM narra el ridículo |
 | ☠️ **Muerte de personaje** | ✅ | Impacto emocional máximo |
@@ -367,7 +392,7 @@ El DM genera imágenes **automáticamente** en momentos narrativamente important
 ### 🔌 Providers Soportados
 
 | Provider | Calidad | Velocidad | Costo | Notas |
-|----------|---------|------------|-------|-------|
+|----------|:------:|:----------:|:-----:|-------|
 | 🌸 **Pollinations** | Buena ⭐⭐⭐ | ~1s | Gratis | Default, no necesita API key |
 | 🎨 **MiniMax** | Excelente ⭐⭐⭐⭐⭐ | ~10s | API key | Recomendado para campañas serias |
 | ⚡ **Flux** | Alta ⭐⭐⭐⭐ | Variable | Local | Requiere servidor local |
@@ -436,7 +461,7 @@ Todo el estado vive en `~/.hermes/hermesdm_state.json`:
 }
 ```
 
-**Importante:** Si el bot se cae o se reinicia, el estado se recupera automáticamente. Los death saves, HP, NPCs y posición en combate se mantienen.
+**Importante:** Si el bot se cae o se reinicia, el estado se recupera automáticamente. Los death saves, HP, NPCs y posición en combate se mantienen. 💾
 
 ---
 
@@ -472,8 +497,7 @@ hermesdm/
 └── tests/                        # 🧪 274 tests
     ├── test_combat_engine.py
     ├── test_character_sheet.py
-    ├── test_diceRoller.py
-    └── ...
+    └── test_diceRoller.py
 ```
 
 ---
@@ -506,7 +530,7 @@ python -c "import yaml; yaml.safe_load(open('config.yaml'))"
 1. Fork → branch feat/mi-feature
 2. Hackear
 3. ruff check + mypy --ignore-missing-imports
-4. pytest tests/ -v (todos green)
+4. pytest tests/ -v (todos green ✅)
 5. PR → reviewers
 6. Merge → CI corre ruff + mypy + pytest
 ```
@@ -529,11 +553,13 @@ python -c "import yaml; yaml.safe_load(open('config.yaml'))"
 
 ## 🤝 Autor
 
-**Sherman** — [@TheShugarBoy](https://twitter.com/TheShugarBoy) 🐦
-
+<p align="center">
+<strong>Sherman</strong> — [@TheShugarBoy](https://twitter.com/TheShugarBoy) 🐦
+<br/>
 Desarrollado con Python 🐍, Telegram Bots API, y MiniMax LLM.
+</p>
 
-¿Encontraste un bug? 🐛 Abrí un issue o mandame un DM en Twitter.
+¿Encontraste un bug? 🐛 Abrí un [issue](https://github.com/sebaunsa-collab/hermesdm/issues) o mandame un DM en [Twitter](https://twitter.com/TheShugarBoy).
 
 ---
 

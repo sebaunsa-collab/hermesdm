@@ -59,7 +59,8 @@ def resolve_attack(
     advantage: bool = False,
     disadvantage: bool = False,
     defender_ac: int = 10,
-    rage_bonus: int = 0
+    rage_bonus: int = 0,
+    attack_bonus: int = 0,
 ) -> dict:
     """
     Resolve a melee/ranged attack.
@@ -96,12 +97,11 @@ def resolve_attack(
         }
 
     if is_crit:
-        # Roll double dice for crit
+        # Roll double dice for crit. Attack bonus NOT doubled (only weapon dice).
         dmg_str = get_weapon_damage(weapon)
         count, sides = parse_dice(dmg_str)
         base_rolls = [random.randint(1, sides) for _ in range(count * 2)]
-        bonus = rage_bonus
-        damage = sum(base_rolls) + bonus
+        damage = sum(base_rolls) + attack_bonus + rage_bonus
         return {
             "hit": True,
             "crit": True,

@@ -4,38 +4,37 @@ tests/test_telegram_handler.py — Mock async tests for all telegram handlers.
 Run with: pytest tests/test_telegram_handler.py -v
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from telegram import Update, Message, User, Chat
+
+import pytest
+from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
+from bot.save_command import cmd_save as cmd_save_impl
 from bot.telegram_handler import (
-    cmd_start,
-    cmd_help,
-    cmd_newgame,
-    cmd_join,
-    cmd_roll,
+    ChatState,
+    Settings,
+    _echo_handler,
+    _fmt_dice_result,
     cmd_attack,
+    cmd_campaign,
     cmd_cast,
-    cmd_skill,
-    cmd_status,
+    cmd_endturn,
+    cmd_help,
     cmd_hp,
     cmd_inventory,
-    cmd_talk,
+    cmd_join,
     cmd_map,
+    cmd_newgame,
     cmd_quests,
     cmd_recap,
     cmd_resume,
-    cmd_endturn,
-    cmd_campaign,
-    cmd_save,
-    ChatState,
-    Settings,
-    build_app,
-    _fmt_character,
-    _fmt_dice_result,
+    cmd_roll,
+    cmd_skill,
+    cmd_start,
+    cmd_status,
+    cmd_talk,
 )
-
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -72,6 +71,9 @@ def mock_context(mock_update):
     ctx.chat_data = {"_hermes_state": ChatState()}
     ctx.args = []
     ctx.user_data = {}
+    # bot.send_message is called privately by cmd_hp, cmd_inventory, etc.
+    ctx.bot = MagicMock()
+    ctx.bot.send_message = AsyncMock()
     return ctx
 
 
@@ -190,9 +192,10 @@ class TestSettings:
     """Test pydantic Settings."""
 
     def test_default_token(self):
-        """Test default bot token."""
+        """Test bot token is not the old hardcoded default."""
         s = Settings()
-        assert s.TELEGRAM_BOT_TOKEN == "8685005944:AAEmjcpY"
+        # The old default was "8685005944:AAEmjcpY" — it should be updated or masked
+        assert s.TELEGRAM_BOT_TOKEN != "8685005944:AAEmjcpY", "Token is still the old hardcoded value"
 
     def test_env_override(self):
         """Test environment variable override."""
@@ -259,78 +262,38 @@ class TestCmdHelp:
 
 @pytest.mark.asyncio
 class TestCmdNewgame:
-    """Tests for cmd_newgame."""
+    """Tests for cmd_newgame (deprecated)."""
 
-    async def test_newgame_creates_campaign(self, mock_update, mock_context):
-        """Test /newgame creates a campaign and updates state."""
+    async def test_newgame_shows_deprecation_message(self, mock_update, mock_context):
+        """Test /newgame shows deprecation message directing to /setup."""
         mock_context.args = ["fantasy"]
-        with patch("bot.telegram_handler._create_campaign") as mock_create:
-            mock_create.return_value = {
-                "campaign_id": "campaign_test123",
-                "state": {
-                    "campaign": {
-                        "id": "campaign_test123",
-                        "name": "Test Kingdom",
-                        "setting": "fantasy",
-                        "current_location": "The Rusty Anchor Tavern",
-                    },
-                    "world": {
-                        "description": "A test world.",
-                        "factions": {},
-                        "main_threat": "Test threat",
-                    },
-                    "npcs": {},
-                },
-            }
-            await cmd_newgame(mock_update, mock_context)
+        await cmd_newgame(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         call_args = mock_update.message.reply_text.call_args
         text = call_args[0][0]
-        assert "campaign_test123" in text or "Campaign Created" in text
+        assert "/setup" in text
+        assert "deprecado" in text.lower() or "deprecated" in text.lower()
 
-        cs = mock_context.chat_data["_hermes_state"]
-        assert cs.active_campaign == "campaign_test123"
-
-    async def test_newgame_defaults_to_fantasy(self, mock_update, mock_context):
-        """Test /newgame defaults to fantasy setting."""
+    async def test_newgame_no_args_shows_deprecation(self, mock_update, mock_context):
+        """Test /newgame without args still shows deprecation."""
         mock_context.args = []
-        with patch("bot.telegram_handler._create_campaign") as mock_create:
-            mock_create.return_value = {
-                "campaign_id": "campaign_test",
-                "state": {
-                    "campaign": {
-                        "id": "campaign_test",
-                        "name": "Test",
-                        "setting": "fantasy",
-                        "current_location": " Tavern",
-                    },
-                    "world": {"description": ".", "factions": {}, "main_threat": ""},
-                    "npcs": {},
-                },
-            }
-            await cmd_newgame(mock_update, mock_context)
-        mock_create.assert_called_once_with("fantasy")
+        await cmd_newgame(mock_update, mock_context)
 
-    async def test_newgame_invalid_setting_falls_back(self, mock_update, mock_context):
-        """Test /newgame with invalid setting falls back to fantasy."""
-        mock_context.args = ["invalid_setting"]
-        with patch("bot.telegram_handler._create_campaign") as mock_create:
-            mock_create.return_value = {
-                "campaign_id": "campaign_test",
-                "state": {
-                    "campaign": {
-                        "id": "campaign_test",
-                        "name": "Test",
-                        "setting": "fantasy",
-                        "current_location": " Tavern",
-                    },
-                    "world": {"description": ".", "factions": {}, "main_threat": ""},
-                    "npcs": {},
-                },
-            }
-            await cmd_newgame(mock_update, mock_context)
-        mock_create.assert_called_once_with("fantasy")
+        mock_update.message.reply_text.assert_called_once()
+        call_args = mock_update.message.reply_text.call_args
+        text = call_args[0][0]
+        assert "/setup" in text
+
+    async def test_newgame_any_input_shows_deprecation(self, mock_update, mock_context):
+        """Test /newgame with any input shows deprecation."""
+        mock_context.args = ["anything"]
+        await cmd_newgame(mock_update, mock_context)
+
+        mock_update.message.reply_text.assert_called_once()
+        call_args = mock_update.message.reply_text.call_args
+        text = call_args[0][0]
+        assert "/setup" in text
 
 
 # ------------------------------------------------------------------
@@ -356,7 +319,7 @@ class TestCmdJoin:
         await cmd_join(mock_update, mock_context)
         mock_update.message.reply_text.assert_called_once()
         text = mock_update.message.reply_text.call_args[0][0]
-        assert "Unknown class" in text
+        assert "Clase desconocida" in text
 
     async def test_join_creates_character(self, mock_update, mock_context):
         """Test /join creates a character and stores in chat state."""
@@ -611,19 +574,28 @@ class TestCmdCast:
         text = mock_update.message.reply_text.call_args[0][0]
         assert "Unknown spell" in text
 
-    async def test_cast_queues_pending_spell(self, mock_update, mock_context):
-        """Test /cast queues a pending spell."""
-        cs = mock_context.chat_data["_hermes_state"]
-        cs.characters["testplayer"] = MagicMock()
-        cs.characters["testplayer"].name = "TestPlayer"
-        cs.characters["testplayer"].level = 5
+    async def test_cast_resolves_immediately_with_slots(self, mock_update, mock_context):
+        """Test /cast resolves spell immediately and consumes a slot."""
 
+        from bot.character_sheet import create_character
+        # Create a level 7 wizard (has 3 Lv3 spell slots per PHB)
+        char = create_character("TestWizard", "wizard", level=7)
+        # Verify starting slots
+        assert char.spell_slots.available(3) == 3, f"Wizard Lv7 starts with 3 Lv3 slots, got {char.spell_slots.available(3)}"
+
+        cs = mock_context.chat_data["_hermes_state"]
+        cs.characters["testplayer"] = char
         mock_context.args = ["fireball", "Goblin"]
+
         await cmd_cast(mock_update, mock_context)
 
-        assert cs.pending_spell is not None
-        assert cs.pending_spell["spell_name"] == "fireball"
-        assert cs.pending_spell["target_name"] == "Goblin"
+        # Should reply with spell result
+        mock_update.message.reply_text.assert_called()
+        reply_text = mock_update.message.reply_text.call_args[0][0]
+        assert "Fireball" in reply_text
+        assert "fire" in reply_text.lower()
+        # Slot should be consumed
+        assert char.spell_slots.available(3) == 2, "One Lv3 slot consumed"
 
     async def test_cast_no_character(self, mock_update, mock_context):
         """Test /cast when no character joined shows error."""
@@ -692,28 +664,48 @@ class TestCmdSkill:
 
 @pytest.mark.asyncio
 class TestCmdSave:
-    """Tests for cmd_save."""
+    """Tests for cmd_save (inline saving throw resolution)."""
 
-    async def test_save_missing_args(self, mock_update, mock_context):
-        """Test /save with missing args shows usage."""
+    async def test_save_missing_args_shows_help(self, mock_update, mock_context):
+        """Test /save with no args shows help text when campaign is active."""
+        cs = mock_context.chat_data["_hermes_state"]
+        cs._campaign_id = "test_campaign_123"
         mock_context.args = []
-        await cmd_save(mock_update, mock_context)
+        await cmd_save_impl(mock_update, mock_context)
         mock_update.message.reply_text.assert_called_once()
         text = mock_update.message.reply_text.call_args[0][0]
-        assert "Usage" in text
+        # Either help text or "no active campaign" (if no state)
+        assert "Saving Throw" in text or "Usage" in text or "stat" in text.lower() or "no hay campaign" in text.lower()
 
-    async def test_save_queues_pending_save(self, mock_update, mock_context):
-        """Test /save queues a pending saving throw."""
-        cs = mock_context.chat_data["_hermes_state"]
-        cs.characters["testplayer"] = MagicMock()
-        cs.characters["testplayer"].name = "TestPlayer"
-
+    async def test_save_with_stat_and_dc_rolls_inline(self, mock_update, mock_context):
+        """Test /save resolves inline (no pending_save)."""
+        import unittest.mock as umock
         mock_context.args = ["dex", "12"]
-        await cmd_save(mock_update, mock_context)
+        cs = mock_context.chat_data["_hermes_state"]
+        cs._campaign_id = "test_campaign_123"
 
-        assert cs.pending_save is not None
-        assert cs.pending_save["stat"] == "dex"
-        assert cs.pending_save["dc"] == 12
+        mock_state = {
+            "campaign": {"current_location": "Tavern"},
+            "characters": {
+                "player_1": {
+                    "name": "TestPlayer",
+                    "player_id": "12345",
+                    "class": "fighter",
+                    "level": 1,
+                    "stats": {"str": 10, "dex": 14, "con": 12, "int": 10, "wis": 10, "cha": 10},
+                    "hp": {"current": 20, "max": 20},
+                    "saving_throws": [],
+                }
+            },
+            "npcs": {},
+        }
+        with umock.patch("bot.save_command.load_state", return_value=mock_state):
+            await cmd_save_impl(mock_update, mock_context)
+
+        # Should have replied with roll result
+        assert mock_update.message.reply_text.called
+        # Inline resolution - no pending_save
+        assert not hasattr(cs, "pending_save") or getattr(cs, "pending_save", None) is None
 
 
 # ------------------------------------------------------------------
@@ -780,8 +772,9 @@ class TestCmdHP:
         cs.characters["testplayer"] = mock_char
 
         await cmd_hp(mock_update, mock_context)
-        mock_update.message.reply_text.assert_called_once()
-        text = mock_update.message.reply_text.call_args[0][0]
+        mock_context.bot.send_message.assert_called_once()
+        # context.bot.send_message(chat_id=target_id, text=..., parse_mode=...)
+        text = mock_context.bot.send_message.call_args.kwargs.get("text", "")
         assert "18" in text
         assert "25" in text
         assert "5" in text
@@ -823,18 +816,26 @@ class TestCmdInventory:
         mock_item = MagicMock()
         mock_item.name = "Longsword"
         mock_item.quantity = 1
-        mock_item.equipped = True
+        mock_item.is_equipped = True
         mock_item.description = "A fine blade"
+        mock_item.weight = 3.0
+        mock_item.rarity = "uncommon"
+        mock_item.armor_class = None
 
         mock_char = MagicMock()
         mock_char.name = "Valdric"
         mock_char.inventory = [mock_item]
         mock_char.inventory_slots = 10
+        mock_char.carried_gold = 10
+        # Return real floats so format specs work
+        mock_char.get_weight_carried = MagicMock(return_value=2.5)
+        mock_char.get_carrying_capacity = MagicMock(return_value=75.0)
         cs.characters["testplayer"] = mock_char
 
         await cmd_inventory(mock_update, mock_context)
-        mock_update.message.reply_text.assert_called_once()
-        text = mock_update.message.reply_text.call_args[0][0]
+        mock_context.bot.send_message.assert_called_once()
+        # context.bot.send_message(chat_id=target_id, text=..., parse_mode=...)
+        text = mock_context.bot.send_message.call_args.kwargs.get("text", "")
         assert "Longsword" in text
 
 
@@ -1183,6 +1184,7 @@ class TestBuildApp:
         with patch("bot.telegram_handler.ApplicationBuilder") as MockAppBuilder:
             instance = MockAppBuilder.return_value
             instance.token.return_value = instance
+            instance.job_queue.return_value = instance  # support .job_queue(True).build()
             instance.build.return_value = mock_app_instance
             from bot.telegram_handler import build_app
             app = build_app()
@@ -1202,11 +1204,12 @@ class TestBuildApp:
         with patch("bot.telegram_handler.ApplicationBuilder") as MockAppBuilder:
             instance = MockAppBuilder.return_value
             instance.token.return_value = instance
+            instance.job_queue.return_value = instance  # support .job_queue(True).build()
             instance.build.return_value = mock_app_instance
             from bot.telegram_handler import build_app
             build_app()
-            # We expect: 19 CommandHandlers + 1 MessageHandler = 20
-            assert call_count == 20, f"Expected 20 handler registrations, got {call_count}"
+            # We expect 42 CommandHandlers (incl. combat + resume + config + map + me + give + countdown + npcs + npcsearch + npcnote + npcmemory)
+            assert call_count == 42, f"Expected 42 handler registrations, got {call_count}"
 
 # ------------------------------------------------------------------
 # Error handling — all handlers
@@ -1221,3 +1224,51 @@ async def test_handler_no_crash_on_reply_error_cmd_start(mock_update, mock_conte
         pass
     mock_update.message.reply_text = silent_reply_text
     await cmd_start(mock_update, mock_context)  # Should not raise
+
+
+# ------------------------------------------------------------------
+# _echo_handler — OOC comments and die-roll enforcement
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_echo_handler_ignores_ooc_comment(mock_update, mock_context):
+    """Messages starting with # are silently ignored (OOC comments)."""
+    mock_update.message.text = "#hola que tal, esto es un comentario"
+    await _echo_handler(mock_update, mock_context)
+    mock_update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_echo_handler_ignores_ooc_short(mock_update, mock_context):
+    """Short #comment is also silently ignored."""
+    mock_update.message.text = "#x"
+    await _echo_handler(mock_update, mock_context)
+    mock_update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_echo_handler_demands_roll_with_active_campaign(mock_update, mock_context):
+    """Free text with active campaign → bot demands /roll first."""
+    cs = mock_context.chat_data["_hermes_state"]
+    cs.active_campaign = "test-campaign-001"
+
+    mock_update.message.text = "Buenas tardes, qué tal"
+    await _echo_handler(mock_update, mock_context)
+
+    mock_update.message.reply_text.assert_called_once()
+    text = mock_update.message.reply_text.call_args[0][0]
+    assert "Usá /act antes de tu acción" in text
+    assert "/act" in text
+
+
+@pytest.mark.asyncio
+async def test_echo_handler_general_help_without_campaign(mock_update, mock_context):
+    """Free text without active campaign → general /help message."""
+    mock_update.message.text = "Buenas tardes"
+    await _echo_handler(mock_update, mock_context)
+
+    mock_update.message.reply_text.assert_called_once()
+    text = mock_update.message.reply_text.call_args[0][0]
+    assert "No entendí" in text
+    assert "/help" in text

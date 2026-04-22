@@ -1,25 +1,32 @@
 """
 test_combat_engine.py
 """
-import pytest, sys, os
+import os
+import sys
+
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from bot.character_sheet import HP
 from bot.combat_engine import (
-    resolve_attack, apply_damage, parse_dice, roll_dice,
-    get_weapon_damage, SPELLS, resolve_spell
+    SPELLS,
+    apply_damage,
+    get_weapon_damage,
+    parse_dice,
+    resolve_attack,
 )
-from bot.character_sheet import Character, HP, DeathSaves, create_character
 
 
 class TestResolveAttack:
     def test_miss(self):
         r = resolve_attack("Valdric", "Goblin", 10, defender_ac=15)
-        assert r["hit"] == False
+        assert not r["hit"]
         assert r["damage"] == 0
 
     def test_hit(self):
         r = resolve_attack("Valdric", "Goblin", 16, defender_ac=15)
-        assert r["hit"] == True
+        assert r["hit"]
         assert r["damage"] > 0
 
     def test_nat_20(self):
@@ -27,7 +34,7 @@ class TestResolveAttack:
         for _ in range(50):
             r = resolve_attack("Valdric", "Goblin", 20, defender_ac=15)
             if r["crit"]:
-                assert r["hit"] == True
+                assert r["hit"]
                 assert r["damage"] > 0
                 assert "CRITICAL" in r["note"]
                 break
@@ -38,7 +45,7 @@ class TestResolveAttack:
         for _ in range(50):
             r = resolve_attack("Valdric", "Goblin", 1, defender_ac=15)
             if r.get("fumble"):
-                assert r["hit"] == False
+                assert not r["hit"]
                 assert r["damage"] == 0
                 break
         else:
@@ -63,7 +70,7 @@ class TestApplyDamage:
         hp = HP(max=20, current=10)
         result = apply_damage(hp, 15)
         assert result["current_hp"] == 0
-        assert result["dead"] == True
+        assert result["dead"]
 
 
 class TestCombatEngine:

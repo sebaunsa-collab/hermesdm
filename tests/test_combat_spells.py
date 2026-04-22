@@ -1,11 +1,7 @@
 """
 Tests for combat_engine.py — spell resolution and SPELLS dict.
 """
-import pytest
-from bot.combat_engine import (
-    resolve_spell, SPELLS, resolve_attack,
-    get_weapon_damage, WEAPON_DAMAGE
-)
+from bot.combat_engine import SPELLS, WEAPON_DAMAGE, get_weapon_damage, resolve_spell
 
 
 class TestSpells:
@@ -90,7 +86,7 @@ class TestResolveSpell:
 
     def test_resolve_spell_healing_spell(self):
         spell = SPELLS["cure_wounds"]
-        result = resolve_spell(
+        resolve_spell(
             caster_level=5, spell_name="cure_wounds",
             spell_save_dc=0, target_count=1,
             spell_data=spell

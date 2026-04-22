@@ -1,11 +1,15 @@
 """
 Tests for turn_manager.py — combat initiative and turn tracking.
 """
-import pytest
 from bot.turn_manager import (
-    Combatant, CombatState, start_combat, next_turn,
-    delay, remove_combatant, end_combat, combat_summary,
-    roll_initiative
+    CombatState,
+    combat_summary,
+    delay,
+    end_combat,
+    next_turn,
+    remove_combatant,
+    roll_initiative,
+    start_combat,
 )
 
 

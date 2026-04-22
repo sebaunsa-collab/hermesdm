@@ -1,14 +1,15 @@
 """
 test_skill_checks.py
 """
-import pytest, sys, os
+import os
+import sys
+
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.skill_checks import (
-    resolve_skill_check, resolve_save, get_dc,
-    describe_check, ABILITIES, ALL_SKILLS
-)
 from bot.character_sheet import create_character
+from bot.skill_checks import describe_check, get_dc, resolve_save, resolve_skill_check
 
 
 class TestSkillChecks:
@@ -30,12 +31,12 @@ class TestSkillChecks:
     def test_proficiency_applied(self):
         # Athletics is in proficiencies
         result = resolve_skill_check(self.c, "athletics", dc=0)
-        assert result.get("proficient") == True
+        assert result.get("proficient")
 
     def test_non_proficiency(self):
         # Arcana is not in proficiencies
         result = resolve_skill_check(self.c, "arcana", dc=0)
-        assert result.get("proficient") == False
+        assert not result.get("proficient")
 
     def test_save(self):
         self.c.stats["con"] = 14  # +2

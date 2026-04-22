@@ -3,11 +3,11 @@ main.py — Entry point for HermesDM bot.
 Currently a text-based REPL for local testing (no Telegram).
 Run: python main.py
 """
-import sys
 import textwrap
-from bot.dice_engine import roll, resolve_check
-from state.state_manager import load_state, save_state, campaign_exists, list_campaigns
+
+from bot.dice_engine import resolve_check, roll
 from dm.world_builder import create_campaign
+from state.state_manager import list_campaigns, load_state
 
 
 def print_wrapped(text: str, width: int = 80):
@@ -104,13 +104,14 @@ COMMANDS = {
     "/status": (cmd_status, "— List active campaigns"),
     "/load": (cmd_load, "<campaign_id> — Load a campaign"),
     "/help": (lambda a: "\n".join(f"{k}: {v[1]}" for k, v in COMMANDS.items()), "— Show this help"),
+    "/exit": (lambda a: ("__EXIT__", "Goodbye!")[1], "— Exit HermesDM"),
+    "/quit": (lambda a: ("__EXIT__", "Goodbye!")[1], "— Exit HermesDM"),
 }
 
 
 def repl():
     print_wrapped("HermesDM — AI Dungeon Master (Local Test REPL)")
     print("Type /help for commands. Ctrl+C to exit.\n")
-    active_campaign = None
 
     while True:
         try:
@@ -132,6 +133,9 @@ def repl():
 
         handler = COMMANDS[cmd][0]
         result = handler(args)
+        if result == "__EXIT__":
+            print("Goodbye!")
+            break
         print(result + "\n")
 
 

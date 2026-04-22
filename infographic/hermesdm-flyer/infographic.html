@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HermesDM - Tu mesa de D&D dentro de Telegram</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #12121a;
+      --bg-card: #1a1a24;
+      --accent: #8b5cf6;
+      --accent-glow: #a78bfa;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border: #2a2a3a;
+      --success: #22c55e;
+      --dice: #f59e0b;
+      --combat: #ef4444;
+      --narrative: #ec4899;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Outfit', system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      width: 800px;
+      height: 1000px;
+      background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+      border-radius: 24px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 0 80px rgba(139, 92, 246, 0.15);
+    }
+
+    /* Subtle grid pattern */
+    .container::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(139, 92, 246, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(139, 92, 246, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* Glow effect top */
+    .glow-top {
+      position: absolute;
+      top: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 400px;
+      height: 200px;
+      background: radial-gradient(ellipse, rgba(139, 92, 246, 0.3) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .header {
+      padding: 48px 48px 32px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .logo-section {
+      flex: 1;
+    }
+
+    .logo-text {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .logo-text h1 {
+      font-size: 56px;
+      font-weight: 800;
+      letter-spacing: -2px;
+      background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-glow) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .logo-badge {
+      background: var(--accent);
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .tagline {
+      font-size: 18px;
+      color: var(--text-secondary);
+      font-weight: 400;
+      margin-bottom: 20px;
+    }
+
+    .stats-row {
+      display: flex;
+      gap: 24px;
+    }
+
+    .stat {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .stat-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    .logo-image {
+      width: 140px;
+      height: 140px;
+      border-radius: 20px;
+      overflow: hidden;
+      border: 2px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .logo-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+      margin: 0 48px;
+    }
+
+    .features {
+      padding: 32px 48px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .feature {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      transition: all 0.3s ease;
+    }
+
+    .feature:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .feature-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+
+    .feature-icon svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .feature-icon.dice { background: rgba(245, 158, 11, 0.15); color: var(--dice); }
+    .feature-icon.combat { background: rgba(239, 68, 68, 0.15); color: var(--combat); }
+    .feature-icon.char { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+    .feature-icon.narrative { background: rgba(236, 72, 153, 0.15); color: var(--narrative); }
+    .feature-icon.turns { background: rgba(139, 92, 246, 0.15); color: var(--accent); }
+
+    .feature h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text-primary);
+    }
+
+    .feature p {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .commands-section {
+      padding: 0 48px 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .commands-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .commands-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .command {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--accent-glow);
+      transition: all 0.2s ease;
+    }
+
+    .command:hover {
+      background: rgba(139, 92, 246, 0.1);
+      border-color: var(--accent);
+    }
+
+    .architecture {
+      padding: 0 48px 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .arch-diagram {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .arch-bot {
+      text-align: center;
+      flex: 1;
+    }
+
+    .arch-bot-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--bg-secondary), var(--border));
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 10px;
+    }
+
+    .arch-bot-icon svg {
+      width: 28px;
+      height: 28px;
+      color: var(--text-secondary);
+    }
+
+    .arch-bot-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .arch-bot-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .arch-arrow {
+      color: var(--accent);
+      font-size: 24px;
+    }
+
+    .arch-arrow svg {
+      width: 32px;
+      height: 32px;
+    }
+
+    .footer {
+      padding: 32px 48px 40px;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 16px 32px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
+    }
+
+    .footer-text {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .footer-text span {
+      color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="glow-top"></div>
+    
+    <header class="header">
+      <div class="logo-section">
+        <div class="logo-text">
+          <h1>HermesDM</h1>
+          <span class="logo-badge">Beta</span>
+        </div>
+        <p class="tagline">Tu mesa de D&amp;D dentro de Telegram</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-dot"></span>
+            274 tests passing
+          </div>
+          <div class="stat">
+            <span class="stat-dot"></span>
+            D&D 5e compatible
+          </div>
+          <div class="stat">
+            <span class="stat-dot"></span>
+            Open Source
+          </div>
+        </div>
+      </div>
+      <div class="logo-image">
+        <img src="file:///home/hermes/hermesdm/infographic/hermesdm-flyer/hermesdm-logo.jpg" alt="HermesDM Logo">
+      </div>
+    </header>
+
+    <div class="divider"></div>
+
+    <section class="features">
+      <div class="feature">
+        <div class="feature-icon dice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <circle cx="15.5" cy="8.5" r="1.5"/>
+            <circle cx="8.5" cy="15.5" r="1.5"/>
+            <circle cx="15.5" cy="15.5" r="1.5"/>
+            <circle cx="12" cy="12" r="1.5"/>
+          </svg>
+        </div>
+        <h3>Motor de Dados</h3>
+        <p>Tiradas XdY+Z con critico y pifia automatica</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon combat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.5 17.5L3 6V3h3l11.5 11.5"/>
+            <path d="M13 19l6-6"/>
+            <path d="M16 16l4 4"/>
+            <path d="M19 21l2-2"/>
+          </svg>
+        </div>
+        <h3>Combate Tactico</h3>
+        <p>Ataques con ventaja/desventaja y hechizos</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon char">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <h3>Personajes</h3>
+        <p>Hojas de personaje con stats y habilidades</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon narrative">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+            <path d="M2 2l7.586 7.586"/>
+            <circle cx="11" cy="11" r="2"/>
+          </svg>
+        </div>
+        <h3>Narrativa IA</h3>
+        <p>Escenas generadas con imagenes automaticas</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon turns">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </div>
+        <h3>Gestor de Turnos</h3>
+        <p>Iniciativa, orden de combate y estados</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon dice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+        </div>
+        <h3>2 Bots Separados</h3>
+        <p>Sin conflictos de polling ni loops infinitos</p>
+      </div>
+    </section>
+
+    <section class="commands-section">
+      <div class="commands-label">Comandos</div>
+      <div class="commands-grid">
+        <span class="command">/roll 1d20</span>
+        <span class="command">/j atacar orco</span>
+        <span class="command">/newgame</span>
+        <span class="command">/me se esconde</span>
+        <span class="command">/help</span>
+      </div>
+    </section>
+
+    <section class="architecture">
+      <div class="arch-diagram">
+        <div class="arch-bot">
+          <div class="arch-bot-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </div>
+          <div class="arch-bot-name">@Hermeciano_bot</div>
+          <div class="arch-bot-desc">Chat 1:1 con Sherman</div>
+        </div>
+        <div class="arch-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+            <polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </div>
+        <div class="arch-bot">
+          <div class="arch-bot-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <div class="arch-bot-name">@HermesDM_bot</div>
+          <div class="arch-bot-desc">Grupo D&D</div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="cta">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        Unite a la aventura
+      </div>
+      <p class="footer-text">Creado con <span>HermesDM</span> · Open Source · 274 tests passing</p>
+    </footer>
+  </div>
+</body>
+</html>

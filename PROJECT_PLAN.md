@@ -260,7 +260,37 @@ build_image_prompt(state, scene) → {
 }
 ```
 
-### 6.3 Async Flow
+### 6.3 Image Mode: ASCII Art (FREE) vs MiniMax (PAID)
+
+**Dual-mode pipeline — decided by `settings.free_image_mode`:**
+
+```
+Momento dramático detectado
+         │
+         ▼
+   ┌─────────────┐
+   │ free_image  │
+   │   _mode?   │
+   └──────┬──────┘
+          │
+   YES    │    NO
+    ┌─────┴─────┐
+    ▼           ▼
+ASCII art    MiniMax
+(instantáneo)  (30-90s async)
+    │           │
+    ▼           ▼
+ pyfiglet    queue → API
+ +curl       → Telegram
+    │
+    ▼
+Envía directo al grupo
+```
+
+**ASCII Art (free):** Usa pyfiglet + asciified API para generar arte en texto.
+**MiniMax (paid):** Genera imagen real via MiniMax, envía después del juego.
+
+### 6.4 ASCII Art Prompt Builder
 ```
 Scene generated → classify_if_dramatic() →
 if dramatic → queue image_gen() → send to MiniMax →
@@ -289,6 +319,46 @@ game continues WITHOUT waiting
 | `/recap` | Resumen de lo que pasó |
 | `/resume` | Reanuda última sesión |
 | `/endturn` | Pasar turno (en combate) |
+| `/configuracion [key] [value]` | Configurar campaign (gratis/pago, dificultad, tono) |
+| `/save <stat> <dc>` | Saving throw |
+
+---
+
+### 7.1 Campaign Settings (`/configuracion`)
+
+Todas las opciones se guardan en el JSON de la campaign y persisten entre sesiones.
+
+| Setting | Opciones | Default | Descripción |
+|---|---|---|---|
+| `free` | `on` / `off` | `on` | `on` = ASCII art (gratis), `off` = MiniMax (pago) |
+| `dificultad` | `easy` / `normal` / `hard` | `normal` | Modifica DC de todos los checks (+/- 2) |
+| `tono` | `serious` / `funny` / `dark` / `epic` | `serious` | Estilo de narrativa del DM |
+| `timer` | `0`–`300` (segundos) | `120` | Tiempo por turno (0=off) |
+| `suerte` | `-3` a `+3` | `0` | Bonus/malus a todos los skill checks |
+| `dados` | `on` / `off` | `on` | Narración dramática de resultados |
+
+**Ejemplos:**
+```
+/configuracion                   → muestra config actual
+/configuracion free off         → activa MiniMax
+/configuracion dificultad hard  → DC +2
+/configuracion tono epic        → narrativa épica
+/configuracion timer 0          → sin timer
+```
+
+**Flujo de imagen por setting:**
+```
+is_dramatic = scene_classifier.detect(scene, event)
+if not is_dramatic → no image
+
+settings = get_settings(campaign_id)
+if settings.free_image_mode:
+    ascii_prompt = image_prompt_builder.build_ascii_art_prompt(state, scene, context)
+    bot.send_ascii_art(ascii_prompt)      # gratis, instantáneo
+else:
+    minimax_prompt = image_prompt_builder.build_prompt(state, scene, context)
+    queue_async_image_gen(minimax_prompt)  # 30-90s, pago
+```
 
 ---
 
@@ -321,27 +391,31 @@ BARBARIAN: STR/CON, Rage, Reckless Attack
 
 ## 10. FEATURES PRIORITARIAS (para hackathon)
 
-### MUST HAVE (MVP)
+### MUST HAVE (MVP) ✅ ALL DONE
 ```
-- /newgame + generación de world
-- /roll con resolución de combat básico
-- Character sheets con HP + stats
-- 3-4 skills checks funcionales
-- DM narrativo con world state
-- Persistencia de campaign entre sesiones
-- Multiplayer (hasta 6 jugadores)
-- /recap (resumen de historia)
+✅ /newgame + world generation (5 settings)
+✅ /roll with combat resolution + advantage/disadvantage + crits/fumbles
+✅ Character sheets con HP + stats + conditions + inventory
+✅ Skill checks funcionales (str/dex/con/int/wis/cha)
+✅ /save inline saving throw (default DC 10)
+✅ DM narrativo con world state
+✅ Campaign persistence entre sesiones (JSON)
+✅ Multiplayer (hasta 6 jugadores)
+✅ /recap (resumen + world summary)
+✅ /configuracion — campaign settings (difficulty, tone, timer, luck, dice mode)
+✅ State validator — consistency enforcement (no killing dead NPCs, HP bounds)
+✅ NPC memory + contradiction detection
+✅ World continuity — timeline + faction tracking
 ```
 
-### SHOULD HAVE (post-MVP)
+### SHOULD HAVE ✅ ALL DONE
 ```
-- Image generation en momentos dramáticos
-- Spell system completo
-- Death saves + death mechanics
-- NPC memory + relationships
-- Skill Challenges (multi-check encounters)
-- Timer por turno
-- Múltiples settings (fantasy, sci-fi, horror)
+✅ Image generation en momentos dramáticos (dual-mode: ASCII art FREE / MiniMax PAID)
+✅ Spell system completo (6 spells)
+✅ Death saves + death mechanics
+✅ NPC memory + relationships + disposition tracking
+✅ Timer por turno configurable (0-300s)
+✅ Múltiples settings (fantasy, dungeon, tavern, horror, scifi)
 ```
 
 ### NICE TO HAVE (post-hackathon)
@@ -378,39 +452,47 @@ Dependencies:
 
 ```
 hermesdm/
-├── bot/
+├── bot/                        # Game logic (pure Python)
 │   ├── __init__.py
-│   ├── telegram_handler.py    # entry point, command routing
-│   ├── dice_engine.py         # roll() + resolve_check()
-│   ├── combat_engine.py       # attack, damage, spells
-│   ├── skill_checks.py        # skill resolution
-│   ├── character_sheet.py     # Player/Character class
-│   ├── turn_manager.py        # combat initiative + turns
-│   └── state_validator.py     # consistency enforcement
-├── dm/
+│   ├── telegram_handler.py     # Entry point, command routing
+│   ├── config_commands.py      # /configuracion command handler
+│   ├── save_command.py        # /save inline saving throw (no 2-step)
+│   ├── dice_engine.py          # roll() + resolve_check()
+│   ├── combat_engine.py        # attack, damage, spells
+│   ├── skill_checks.py         # skill resolution
+│   ├── character_sheet.py      # Player/Character class
+│   ├── turn_manager.py         # CombatState, initiative + turns
+│   └── state_validator.py      # Consistency enforcement + NPC memory
+├── dm/                         # DM brain (LLM-powered)
 │   ├── __init__.py
-│   ├── system_prompt.md       # DM identity + rules + style
-│   ├── narrative_generator.py # scene → narrative text
-│   ├── world_builder.py       # generate world on /newgame
-│   ├── scene_classifier.py    # detecta momento visual
-│   └── image_prompt_builder.py# state → SD prompt
+│   ├── system_prompt.md        # DM identity + rules + style
+│   ├── narrative_generator.py  # scene → narrative text
+│   ├── world_builder.py        # generate world + continuity (timeline, factions)
+│   ├── scene_classifier.py     # detecta momento visual + free/paid mode
+│   └── image_prompt_builder.py # state → SD prompt + ASCII art
 ├── state/
 │   ├── __init__.py
-│   ├── state_manager.py       # load/save campaign state
-│   └── templates/            # starting world templates
-├── tests/
+│   ├── state_manager.py        # load/save campaign state + settings
+│   └── templates.py            # 5 world templates (fantasy/dungeon/tavern/horror/scifi)
+├── campaign_settings.py        # CampaignSettings dataclass
+├── tests/                      # 236 tests (all passing)
 │   ├── test_dice_engine.py
 │   ├── test_combat_engine.py
 │   ├── test_skill_checks.py
 │   ├── test_state_manager.py
-│   └── test_integration.py
-├── data/
-│   └── campaigns/.gitkeep
-├── skill/
-│   └── SKILL.md               # Hermes skill for loading
+│   ├── test_campaign_settings.py
+│   ├── test_world_builder.py
+│   ├── test_turn_manager.py
+│   └── test_telegram_handler.py
+├── data/campaigns/             # Persistent campaign JSON files
+├── skill/SKILL.md             # Hermes Agent skill
+├── references/                  # Architecture docs, prompt templates
 ├── requirements.txt
 ├── README.md
-└── main.py                    # bot entry point
+├── SPEC.md
+├── Makefile
+├── pyproject.toml
+└── main.py                     # Interactive REPL for testing
 ```
 
 ---

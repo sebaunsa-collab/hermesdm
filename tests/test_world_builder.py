@@ -1,11 +1,8 @@
 """
 Tests for world_builder.py — campaign world generation.
 """
-import pytest
-from dm.world_builder import (
-    generate_npcs, build_world, create_campaign,
-    SETTINGS, NPC_TEMPLATES
-)
+from dm.world_builder import NPC_TEMPLATES, build_world, create_campaign, generate_npcs
+from state.templates import SETTINGS as TEMPLATES
 
 
 class TestGenerateNpcs:
@@ -40,8 +37,8 @@ class TestBuildWorld:
     def test_build_world_fantasy(self):
         state = build_world("fantasy")
         assert state["campaign"]["setting"] == "fantasy"
-        assert state["campaign"]["name"] == SETTINGS["fantasy"]["name"]
-        assert state["campaign"]["current_location"] == SETTINGS["fantasy"]["starting_location"]
+        assert state["campaign"]["name"] == TEMPLATES["fantasy"]["name"]
+        assert state["campaign"]["current_location"] == TEMPLATES["fantasy"]["starting_location"]
         assert len(state["npcs"]) == 3
         assert "world" in state
         assert "main_threat" in state["world"]
@@ -50,12 +47,12 @@ class TestBuildWorld:
     def test_build_world_scifi(self):
         state = build_world("scifi")
         assert state["campaign"]["setting"] == "scifi"
-        assert state["campaign"]["name"] == SETTINGS["scifi"]["name"]
+        assert state["campaign"]["name"] == TEMPLATES["scifi"]["name"]
 
     def test_build_world_horror(self):
         state = build_world("horror")
         assert state["campaign"]["setting"] == "horror"
-        assert state["campaign"]["name"] == SETTINGS["horror"]["name"]
+        assert state["campaign"]["name"] == TEMPLATES["horror"]["name"]
 
     def test_build_world_unknown_falls_back_to_fantasy(self):
         state = build_world("unknown_setting")
@@ -68,11 +65,28 @@ class TestBuildWorld:
         assert "description" in state["world"]["locations"][loc]
         assert state["world"]["locations"][loc]["visited"] is True
 
-    def test_build_world_npcs_linked_to_tavern(self):
+    def test_build_world_npcs_linked_to_location(self):
+        """NPCs in the starting location are linked via world['locations'][loc]['npcs']."""
         state = build_world("fantasy")
         loc = state["campaign"]["current_location"]
-        tavern_npcs = state["world"]["locations"][loc].get("NPCs", [])
-        assert len(tavern_npcs) >= 1
+        location_npcs = state["world"]["locations"].get(loc, {}).get("npcs", [])
+        assert len(location_npcs) >= 1, f"No NPCs linked to {loc}"
+
+    def test_build_world_has_npc_memory(self):
+        """NPCs from template have a memory field."""
+        state = build_world("fantasy")
+        for npc_id, npc in state["npcs"].items():
+            assert "memory" in npc, f"{npc_id} missing memory field"
+
+    def test_build_world_has_timeline(self):
+        """World state includes timeline for continuity."""
+        state = build_world("fantasy")
+        assert "timeline" in state.get("world", {})
+
+    def test_build_world_has_settings(self):
+        """Campaign settings are initialized in the state."""
+        state = build_world("fantasy")
+        assert "settings" in state
 
 
 class TestCreateCampaign:
@@ -83,8 +97,7 @@ class TestCreateCampaign:
         assert result["campaign_id"].startswith("campaign_")
 
     def test_create_campaign_saves_state(self):
-        import os
-        from state.state_manager import CAMPAIGNS_DIR, load_state
+        from state.state_manager import load_state
         result = create_campaign("fantasy")
         cid = result["campaign_id"]
         loaded = load_state(cid)
@@ -98,10 +111,10 @@ class TestCreateCampaign:
 
 
 class TestSettings:
-    def test_all_settings_have_required_fields(self):
-        required = ["name", "description", "starting_location",
-                    "starting_location_desc", "factions", "main_threat"]
-        for setting_name, setting in SETTINGS.items():
+    def test_new_templates_have_required_fields(self):
+        """New templates have required fields."""
+        required = ["name", "description", "starting_location", "npcs", "quests"]
+        for setting_name, setting in TEMPLATES.items():
             for field in required:
                 assert field in setting, f"{setting_name} missing {field}"
 

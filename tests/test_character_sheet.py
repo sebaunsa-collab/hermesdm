@@ -1,12 +1,20 @@
 """
 test_character_sheet.py
 """
-import pytest, sys, os
+import os
+import sys
+
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot.character_sheet import (
-    Character, HP, DeathSaves, Item, create_character,
-    CLASS_DEFINITIONS, SKILL_BY_STAT, ALL_SKILLS
+    CLASS_DEFINITIONS,
+    HP,
+    Character,
+    DeathSaves,
+    Item,
+    create_character,
 )
 
 

@@ -1,8 +1,7 @@
 """
 Tests for dice_engine.py — edge cases and full coverage.
 """
-import pytest
-from bot.dice_engine import roll, resolve_check
+from bot.dice_engine import resolve_check, roll
 
 
 class TestRollEdgeCases:

@@ -258,6 +258,104 @@ def get_world_summary(campaign_id: str) -> str:
     return _wb_summary(campaign_id)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ChatState → state.json sync helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def sync_chatstate_to_state(campaign_id: str, cs) -> dict | None:
+    """
+    Serialize ChatState (in-memory game state) into campaign state.json.
+
+    Persists:
+      - characters (player_name -> Character dict)
+      - combat state (initiative order, current turn, round)
+
+    Call this after every state-mutating command (join, attack, cast, etc.)
+    so hermesdm-web can read the latest state.
+    """
+    state = load_state(campaign_id)
+    if state is None:
+        return None
+
+    # ── Characters ────────────────────────────────────────────────────────────
+    state["characters"] = {}
+    for key, char in cs.characters.items():
+        char_dict = char.to_dict()
+        char_dict["player_id"] = key  # store key so web companion can look up
+        state["characters"][key] = char_dict
+
+    # ── Combat state ───────────────────────────────────────────────────────────
+    if cs.combat_state is not None:
+        combatants_data = []
+        for c in cs.combat_state.initiative_order:
+            combatants_data.append({
+                "name": c.name,
+                "initiative": c.initiative,
+                "is_player": c.is_player,
+                "is_active": c.is_active,
+                "delayed": c.delayed,
+                "held": c.held,
+            })
+        state["combat"] = {
+            "active": cs.combat_state.active,
+            "round": cs.combat_state.round,
+            "initiative_order": combatants_data,
+            "current_index": cs.combat_state.current_index,
+            "current_turn": cs.combat_state.current_turn,
+        }
+    else:
+        state["combat"] = {
+            "active": False,
+            "round": 0,
+            "initiative_order": [],
+            "current_index": 0,
+            "current_turn": None,
+        }
+
+    save_state(campaign_id, state)
+    return state
+
+
+def append_history(
+    campaign_id: str,
+    event_text: str,
+    entry_type: str = "narration",
+    session: int | None = None,
+) -> bool:
+    """
+    Append a narrative entry to the campaign's history log.
+
+    Args:
+        campaign_id: campaign identifier
+        event_text: the narration/description text
+        entry_type: narration | dice_roll | combat | dialogue | system
+        session: optional session number (defaults to 1)
+
+    Returns True on success, False if campaign not found.
+    """
+    state = load_state(campaign_id)
+    if state is None:
+        return False
+
+    from datetime import datetime as _dt
+
+    entry = {
+        "event": event_text,
+        "type": entry_type,
+        "timestamp": _dt.utcnow().isoformat(),
+    }
+    if session is not None:
+        entry["session"] = session
+
+    if "history" not in state:
+        state["history"] = []
+    state["history"].append(entry)
+
+    save_state(campaign_id, state)
+    return True
+
+
 if __name__ == "__main__":
     print("=== state_manager sanity test ===")
     # Test new state

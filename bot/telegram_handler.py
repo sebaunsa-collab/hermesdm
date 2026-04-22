@@ -81,17 +81,21 @@ log = logging.getLogger(__name__)
 # Config
 # ------------------------------------------------------------------
 
-# Grupo de D&D — solo aquí responden los comandos de HermesDM
-ALLOWED_GROUP_ID = -1003916745496
+# DEPRECATED — hardcoded group ID removed.
+# Set ALLOWED_GROUP_ID in .env to restrict bot to a specific Telegram group.
+# If unset, the bot works in any chat (DMs and groups).
 
 
 class Settings(BaseSettings):
     """Bot configuration via environment variables."""
 
-    TELEGRAM_BOT_TOKEN: str = "8222165892:AAFdsLM6IEBxAvayetIxBmmfx2I89eVn8zM"
+    TELEGRAM_BOT_TOKEN: str = "8222165892:***"
     ADMIN_USER_IDS: list[int] = []
     MAX_DICE_COUNT: int = 100
     MAX_DICE_SIDES: int = 100
+    # Optional: restrict bot to a specific Telegram group.
+    # Leave empty to allow DMs and any group (e.g. ALLOWED_GROUP_ID=-1003916745496).
+    ALLOWED_GROUP_ID: int | None = None
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -907,6 +911,11 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         cs.characters[name.lower()] = char
         chat_data["_hermes_state"] = cs
 
+        # Persist to state.json so hermesdm-web can read it
+        if cs.active_campaign:
+            from state.state_manager import sync_chatstate_to_state
+            sync_chatstate_to_state(cs.active_campaign, cs)
+
         await update.message.reply_text(
             f"✅ *Character Joined!*\n\n{_fmt_character(char)}",
             parse_mode=ParseMode.MARKDOWN,
@@ -1206,6 +1215,12 @@ async def cmd_attack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             f"Use /roll <dice> (e.g. /roll d20+5) to resolve." + combat_started_msg,
             parse_mode=ParseMode.MARKDOWN,
         )
+
+        # Persist combat/character state so hermesdm-web stays in sync
+        if cs.active_campaign:
+            from state.state_manager import sync_chatstate_to_state
+            sync_chatstate_to_state(cs.active_campaign, cs)
+
     except Exception as e:
         log.exception("cmd_attack error")
         await update.message.reply_text(f"Error: {e}")
@@ -1311,6 +1326,11 @@ async def cmd_cast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             chat_data["_hermes_state"] = cs
         else:
             chat_data["_hermes_state"] = cs
+
+        # Persist character + combat state so hermesdm-web stays in sync
+        if cs.active_campaign:
+            from state.state_manager import sync_chatstate_to_state
+            sync_chatstate_to_state(cs.active_campaign, cs)
 
     except Exception as e:
         log.exception("cmd_cast error")
@@ -2973,142 +2993,142 @@ def build_app() -> Application:
     # (filtered by chat_id to prevent responses in Sherman's 1:1)
     app.add_handler(CommandHandler("start", cmd_start))  # general, no filter
 
-    # HermesDM game commands — filtered to group only
+    # HermesDM game commands — filtered to group only (if ALLOWED_GROUP_ID is set)
     app.add_handler(
-        CommandHandler("help", cmd_help, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("help", cmd_help, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("newgame", cmd_newgame, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("newgame", cmd_newgame, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("join", cmd_join, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("join", cmd_join, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("roll", cmd_roll, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("roll", cmd_roll, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("attack", cmd_attack, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("attack", cmd_attack, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("cast", cmd_cast, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("cast", cmd_cast, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("skill", cmd_skill, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("skill", cmd_skill, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("status", cmd_status, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("status", cmd_status, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("hp", cmd_hp, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("hp", cmd_hp, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
         CommandHandler(
-            "inventory", cmd_inventory, filters=filters.Chat(ALLOWED_GROUP_ID)
+            "inventory", cmd_inventory, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None
         )
     )
     app.add_handler(
-        CommandHandler("give", cmd_give, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("give", cmd_give, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("talk", cmd_talk, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("talk", cmd_talk, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("npcs", cmd_npcs, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("npcs", cmd_npcs, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("npcsearch", cmd_npcsearch, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("npcsearch", cmd_npcsearch, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("npcnote", cmd_npcnote, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("npcnote", cmd_npcnote, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("npcmemory", cmd_npcmemory, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("npcmemory", cmd_npcmemory, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("map", cmd_map, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("map", cmd_map, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("quests", cmd_quests, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("quests", cmd_quests, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("recap", cmd_recap, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("recap", cmd_recap, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("resume", cmd_resume, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("resume", cmd_resume, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("endturn", cmd_endturn, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("endturn", cmd_endturn, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("campaign", cmd_campaign, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("campaign", cmd_campaign, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("save", cmd_save, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("save", cmd_save, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
         CommandHandler(
-            "configuracion", cmd_configuracion, filters=filters.Chat(ALLOWED_GROUP_ID)
+            "configuracion", cmd_configuracion, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None
         )
     )
 
     # Combat commands
     app.add_handler(
         CommandHandler(
-            "startcombat", cmd_startcombat, filters=filters.Chat(ALLOWED_GROUP_ID)
+            "startcombat", cmd_startcombat, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None
         )
     )
     app.add_handler(
         CommandHandler(
-            "begincombat", cmd_startcombat, filters=filters.Chat(ALLOWED_GROUP_ID)
+            "begincombat", cmd_startcombat, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None
         )
     )  # alias
     app.add_handler(
         CommandHandler(
-            "endcombat", cmd_endcombat, filters=filters.Chat(ALLOWED_GROUP_ID)
+            "endcombat", cmd_endcombat, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None
         )
     )
 
     # Game commands (!attack, !confirm, !cancel, !attack_status)
     # Filtered to group only
-    register_game_handlers(app, ALLOWED_GROUP_ID)
+    register_game_handlers(app, settings.ALLOWED_GROUP_ID)
 
     # Exit DM mode — group only
     app.add_handler(
-        CommandHandler("quit", cmd_quit, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("quit", cmd_quit, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("end", cmd_end, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("end", cmd_end, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("exit", cmd_quit, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("exit", cmd_quit, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
 
     # Admin audit log — group only
     app.add_handler(
-        CommandHandler("audit", cmd_audit, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("audit", cmd_audit, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
 
     # Narrative actions (no dice roll) — group only
     app.add_handler(
-        CommandHandler("me", cmd_me, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("me", cmd_me, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
 
     # Image generation — group only
     app.add_handler(
-        CommandHandler("imagen", cmd_imagen, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("imagen", cmd_imagen, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
-        CommandHandler("image", cmd_imagen, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("image", cmd_imagen, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )  # English alias
     app.add_handler(
-        CommandHandler("countdown", cmd_countdown, filters=filters.Chat(ALLOWED_GROUP_ID))
+        CommandHandler("countdown", cmd_countdown, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
 
     # Plan B: /act prefix for async player actions (MUST be before echo_handler)
     # Filter: SUPERGROUP only (already set at handler level)
     app.add_handler(
         MessageHandler(
-            filters.TEXT & filters.ChatType.SUPERGROUP & filters.Chat(ALLOWED_GROUP_ID),
+            filters.TEXT & filters.ChatType.SUPERGROUP & filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else filters.TEXT & filters.ChatType.SUPERGROUP,
             _j_action_handler,
         )
     )
@@ -3212,6 +3232,15 @@ async def _j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             chat_id=chat_id,
             result=result,
             character_name=char.name,
+        )
+
+        # ── Persist state so hermesdm-web stays in sync ───────────────────────
+        from state.state_manager import sync_chatstate_to_state, append_history
+        sync_chatstate_to_state(cs.active_campaign, cs)
+        append_history(
+            cs.active_campaign,
+            f"[{char.name}] {result.narrative}",
+            entry_type=result.action_type,
         )
 
     except Exception as e:
@@ -3423,6 +3452,11 @@ async def _echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 if __name__ == "__main__":
+    main()
+
+
+def main() -> None:
+    """Entry point for the hermesdm CLI command (pip install -e .)."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",

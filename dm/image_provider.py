@@ -480,6 +480,138 @@ class NanoBananaProvider(ImageProvider):
         return self._result(output_path, prompt, elapsed)
 
 
+# ── FalProvider ──────────────────────────────────────────────────────────────
+
+class FalProvider(ImageProvider):
+    """
+    fal.ai — High-quality image generation via REST API (FLUX.1, Imagen, etc.).
+
+    Requires FAL_KEY env var or api_key param.
+    Get your key at: https://fal.ai/dashboard
+
+    Recommended models:
+    - "fal-ai/flux/dev" (default) — best quality/speed balance, ~$0.02/img
+    - "fal-ai/flux/schnell" — fastest, ~1-2s, ~$0.01/img
+    - "fal-ai/flux-pro/v1.1-ultra" — highest quality, ~$0.04/img
+    - "fal-ai/flux-lora" — with LoRA support
+    """
+
+    name = "fal"
+    BASE_URL = "https://fal.run/{model}"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "fal-ai/flux/dev",
+        timeout: int = 120,
+    ):
+        self.api_key = api_key or os.environ.get("FAL_KEY", "")
+        self.model = model
+        self.timeout = timeout
+
+    async def generate(
+        self,
+        prompt: str,
+        scene_type: str,
+        **kwargs: Any,
+    ) -> ImageResult:
+        if not self.api_key:
+            raise ImageGenerationError(
+                "fal.ai API key not set. Set FAL_KEY env var or pass api_key."
+            )
+
+        import json
+        import urllib.request
+
+        model = kwargs.get("model", self.model)
+        url = self.BASE_URL.format(model=model)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "prompt": prompt,
+            "image_size": kwargs.get("image_size", "1024x1024"),
+            "num_inference_steps": kwargs.get("num_inference_steps", 28),
+        }
+        # Allow arbitrary fal.ai params via kwargs
+        for key in ("seed", "guidance_scale", "num_images", "aspect_ratio"):
+            if key in kwargs:
+                payload[key] = kwargs[key]
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST",
+        )
+
+        output_path = f"/tmp/hermes_img_fal_{int(time.time())}.png"
+
+        start = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            if e.code == 401:
+                raise ImageGenerationError(
+                    f"fal.ai auth failed (401): Invalid FAL_KEY"
+                ) from e
+            elif e.code == 429:
+                raise ImageGenerationError(
+                    f"fal.ai rate limited (429): too many requests"
+                ) from e
+            elif e.code == 404:
+                raise ImageGenerationError(
+                    f"fal.ai model not found (404): {model}"
+                ) from e
+            else:
+                raise ImageGenerationError(
+                    f"fal.ai API error ({e.code}): {body[:200]}"
+                ) from e
+        except Exception as e:
+            raise ImageGenerationError(f"fal.ai request failed: {e}") from e
+
+        elapsed = time.time() - start
+
+        # Extract image URL from response
+        images = result.get("images", [])
+        if not images:
+            raise ImageGenerationError(
+                f"No images in fal.ai response: {result.keys()}"
+            )
+
+        image_url = images[0].get("url", "")
+        if not image_url:
+            raise ImageGenerationError(
+                f"No image URL in fal.ai response: {images[0]}"
+            )
+
+        # Download the image
+        img_req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(img_req, timeout=30) as resp:
+                data = resp.read()
+        except Exception as e:
+            raise ImageGenerationError(
+                f"fal.ai image download failed: {e}"
+            ) from e
+
+        if len(data) < 1000:
+            raise ImageGenerationError(
+                f"fal.ai image too small ({len(data)} bytes)"
+            )
+
+        os.makedirs(os.path.dirname(output_path) or "/tmp", exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(data)
+
+        return self._result(output_path, prompt, elapsed)
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 _PROVIDER_CLASSES: dict[str, type[ImageProvider]] = {
@@ -487,6 +619,7 @@ _PROVIDER_CLASSES: dict[str, type[ImageProvider]] = {
     "minimax": MiniMaxProvider,
     "flux": FluxProvider,
     "nanobanana": NanoBananaProvider,
+    "fal": FalProvider,
 }
 
 
@@ -501,6 +634,7 @@ def get_provider(
         provider = get_provider("pollinations")
         provider = get_provider("minimax", api_key="sk-...")
         provider = get_provider("flux", endpoint="http://localhost:7860")
+        provider = get_provider("fal", api_key="FAL_KEY")
     """
     cls = _PROVIDER_CLASSES.get(provider_name.lower())
     if cls is None:

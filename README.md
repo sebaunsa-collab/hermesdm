@@ -132,7 +132,7 @@
         ┌────────────────────────┐
         │  Image Provider         │
         │  (Pollinations/MiniMax/│
-        │   Flux/NanoBanana)     │
+        │   Flux/NanoBanana/fal)  │
         └────────────┬───────────┘
                      │ ⏱️ +5 min cooldown
                      ▼
@@ -220,7 +220,7 @@
 | 🧙 **NPCs con memoria** | ✅ | Notas, diálogos, memoria entre sesiones |
 | ⚔️ **Combate por turnos** | ✅ | Iniciativa, ataques, daño, crits |
 | 📖 **Narración LLM** | ✅ | Escenas dinámicas según el género |
-| 🖼️ **Generación de imágenes** | ✅ | Pollinations, MiniMax, Flux, NanoBanana |
+| 🖼️ **Generación de imágenes** | ✅ | Pollinations, MiniMax, Flux, NanoBanana, **fal.ai** |
 | 💾 **Estado en JSON** | ✅ | Persiste entre sesiones en `~/.hermes/` |
 | 🏰 **5 géneros de campaña** | ✅ | fantasy, dungeon, horror, tavern, scifi |
 | 💬 **100% Telegram** | ✅ | Ninguna app externa necesaria |
@@ -279,6 +279,7 @@ El web companion es **read-only** — muestra personajes, historial, quests e im
 | 🐍 **Python 3.12+** | ✅ Siempre | [python.org](https://www.python.org/) |
 | 📱 **Telegram Bot Token** | ✅ Siempre | [@BotFather](https://t.me/BotFather) |
 | 🎨 **MiniMax API Key** | ❌ Opcional | [MiniMax](https://platform.minimaxi.com) — si no está, usa Pollinations (gratis) |
+| 🔥 **fal.ai API Key** | ❌ Opcional | [fal.ai](https://fal.ai/dashboard) — FLUX.1 [dev], mejor calidad/precio |
 | 🤖 **OpenAI Token** | ❌ Opcional | [OpenAI](https://platform.openai.com/) — para narración LLM más rica |
 
 ---
@@ -393,6 +394,7 @@ El DM genera imágenes **automáticamente** en momentos narrativamente important
 | 🎨 **MiniMax** | Excelente ⭐⭐⭐⭐⭐ | ~10s | API key | Recomendado para campañas serias |
 | ⚡ **Flux** | Alta ⭐⭐⭐⭐ | Variable | Local | Requiere servidor local |
 | 🍌 **NanoBanana** | ??? | ??? | ??? | Experimental |
+| 🔥 **fal.ai** | Alta ⭐⭐⭐⭐⭐ | ~2-5s | API key | FLUX.1 [dev], la mejor calidad/precio |
 
 ### ⚙️ Configuración
 
@@ -401,9 +403,10 @@ El DM genera imágenes **automáticamente** en momentos narrativamente important
 image_provider: "pollinations"   # default (gratis)
 minimax_api_key: "tu-key"        # opcional
 flux_endpoint: "http://localhost:7860"  # opcional
+fal_key: "tu-fal-key"            # opcional — https://fal.ai/dashboard
 ```
 
-O en runtime via `/settings image_provider minimax`.
+O en runtime via `/settings image_provider fal`.
 
 ---
 

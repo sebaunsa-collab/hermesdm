@@ -2816,23 +2816,11 @@ async def cmd_end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        # Build a simple epilogue from campaign data
+        # Generate epilogue via NarrativeGenerator
+        ng = NarrativeGenerator()
+        closure = ng.generate_closure(state, language=Language.ES)
         campaign_name = state.get("campaign", {}).get("name", "La aventura")
-        setup = state.get("setup", {})
-        tone = setup.get("tone", "")
-        premise = setup.get("premise", "")
-
-        epilogue_lines = [
-            f"🎭 *EPÍLOGO — {campaign_name}*",
-            "",
-            f"Así concluye esta historia. {premise}" if premise else "Así concluye esta historia.",
-            "",
-            f"_Tone: {tone}_" if tone else "",
-            "",
-            "Los héroes parten hacia nuevos horizontes,",
-            "pero su legado perdurará en las leyendas...",
-        ]
-        epilogue_text = "\n".join(line for line in epilogue_lines if line)
+        epilogue_text = f"🎭 *EPÍLOGO — {campaign_name}*\n\n{closure['narrative']}"
 
         # Mark campaign as completed
         state["campaign"]["status"] = "completed"

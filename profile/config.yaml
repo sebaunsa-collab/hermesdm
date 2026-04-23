@@ -1,0 +1,45 @@
+# HermesDM Profile Configuration
+# This file is imported when setting up the HermesDM profile.
+
+model:
+  provider: minimax
+  name: minimax/minimax-m2.7
+
+gateway:
+  platform: telegram
+
+tools:
+  enabled:
+    - terminal
+    - execute_code
+    - skills
+    - browser
+    - vision
+    - file
+    - cronjob
+    - todo
+    - tts
+
+# Profile entry point — do not change
+entry_point: bot.telegram_handler:main
+
+# HermesDM-specific configuration
+hermesdm:
+  image_provider: pollinations
+  auto_image_triggers:
+    nat_20: true
+    nat_1: true
+    death: true
+    boss_combat: true
+    discovery: true
+    session_end: true
+    hp_below_25: true
+  image_cooldown_minutes: 5
+  default_genre: fantasy
+  default_difficulty: normal
+  default_tone: serious
+
+# Logging
+logging:
+  level: INFO
+  audit_log: true

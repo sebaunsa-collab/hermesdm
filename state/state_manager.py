@@ -69,6 +69,7 @@ def new_state(campaign_id: str, name: str, setting: str) -> dict:
         "quests": {"active": [], "completed": []},
         "history": [],
         "generated_images": [],
+        "story_arc": None,
         "settings": CampaignSettings().to_dict(),
     }
     return state

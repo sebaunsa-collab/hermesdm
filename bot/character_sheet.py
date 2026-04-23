@@ -455,6 +455,8 @@ class Character:
 
     def mod(self, stat: str) -> int:
         """Modifier for a stat (floor((stat-10)/2))."""
+        if self.stats is None:
+            return 0
         return (self.stats.get(stat, 10) - 10) // 2
 
     def mod_str(self, stat: str) -> str:
@@ -634,7 +636,7 @@ class Character:
             player_class=data["class"],
             level=data.get("level", 1),
             xp=data.get("xp", 0),
-            stats=data.get("stats", {}),
+            stats=data.get("stats") or {},
             hp=hp,
             ac=data.get("ac", 10),
             proficiencies=data.get("proficiencies", []),

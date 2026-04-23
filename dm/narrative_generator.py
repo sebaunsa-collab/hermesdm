@@ -316,14 +316,15 @@ class NarrativeGenerator:
         # Format active characters
         char_summaries = []
         for cid, char in characters.items():
-            hp = char.get("hp", 0)
-            max_hp = char.get("max_hp", 0)
+            hp_data = char.get("hp", {}) if isinstance(char.get("hp"), dict) else {}
+            hp_current = hp_data.get("current", 0)
+            hp_max = hp_data.get("max", 0)
             name = char.get("name", cid)
-            status = char.get("status", "ready")
-            char_summaries.append(f"{name} (HP {hp}/{max_hp}, {status})")
+            status = char.get("status", "listo")
+            char_summaries.append(f"{name} ({hp_current}/{hp_max} PV, {status})")
 
         character_present = (
-            ", ".join(char_summaries) if char_summaries else "The party stands ready"
+            ", ".join(char_summaries) if char_summaries else "El grupo está listo"
         )
 
         # Format nearby NPCs
@@ -331,37 +332,37 @@ class NarrativeGenerator:
         for nid, npc in npcs.items():
             if npc.get("location") == location or not npc.get("location"):
                 name = npc.get("name", nid)
-                status = npc.get("status", "present")
+                status = npc.get("status", "presente")
                 npc_summaries.append(f"{name} ({status})")
 
         npc_or_character = (
-            f"{npc_summaries[0]} is here" if npc_summaries else character_present
+            f"{npc_summaries[0]} está aquí" if npc_summaries else character_present
         )
 
         context: dict = {
             "location": location,
-            "sensory_detail": "shadows cling to every surface",
-            "environmental_detail": "cold mist rolls between ancient stones",
-            "ambient_threat": "A distant growl echoes",
-            "obstacle": "obscured by undergrowth and memory",
+            "sensory_detail": "las sombras se aferran a cada superficie",
+            "environmental_detail": "una fría niebla se arremolina entre piedras antiguas",
+            "ambient_threat": "Un gruñido distante resuena",
+            "obstacle": "oculto por la vegetación y el olvido",
             "character_present": character_present,
             "npc_or_character_present": npc_or_character,
-            "action_description": "moves cautiously through the terrain",
-            "reaction_description": "watches with guarded interest",
-            "emotional_tone": "charged with unspoken tension",
-            "speaker": "A voice emerges",
-            "listener_reaction": "You weigh their words carefully.",
+            "action_description": "se mueve con cautela por el terreno",
+            "reaction_description": "te observa con recelo",
+            "emotional_tone": "cargado de tensión no dicha",
+            "speaker": "Una voz emerge",
+            "listener_reaction": "Sopesas sus palabras con cuidado.",
             "environment": state.get("world", {}).get(
-                "current_environment", "battlefield"
+                "current_environment", "campo de batalla"
             ),
-            "tactical_situation": "Positioning becomes critical.",
-            "revelation": "everything you believed was built on lies",
-            "affected_party": "The weight of it settles over the party",
-            "healing_atmosphere": "a fire crackles nearby",
-            "resources_available": "Provisions and rest",
-            "party_status": "Fatigue weighs heavy",
-            "ambient_details": "The night passes slowly",
-            "opportunity_available": "Training or preparation is possible",
+            "tactical_situation": "El posicionamiento se vuelve crítico.",
+            "revelation": "todo en lo que creías estaba construido sobre mentiras",
+            "affected_party": "El peso de ello se asienta sobre el grupo",
+            "healing_atmosphere": "una hoguera crepita cerca",
+            "resources_available": "Provisiones y descanso",
+            "party_status": "La fatiga pesa mucho",
+            "ambient_details": "La noche transcurre lentamente",
+            "opportunity_available": "Entrenamiento o preparación es posible",
         }
 
         # Apply state overrides
@@ -391,6 +392,7 @@ class NarrativeGenerator:
         scene_type: SceneType,
         context: dict | None = None,
         language: Language = Language.ES,
+        milestone_context: dict | None = None,
     ) -> dict:
         """
         Generate a narrative scene based on current state and scene type.
@@ -400,6 +402,7 @@ class NarrativeGenerator:
             scene_type: One of SceneType enum values
             context: Optional overrides for template variables
             language: Language for narrative templates (default: ES)
+            milestone_context: Optional dict from PacingEngine with milestone info
 
         Returns:
             dict with keys:
@@ -413,7 +416,7 @@ class NarrativeGenerator:
 
         # LLM mode: call AI provider
         if self.llm_client is not None:
-            narrative = self._generate_with_llm(scene_type, full_context, language)
+            narrative = self._generate_with_llm(scene_type, full_context, language, milestone_context)
             triggered_image = self._should_trigger_image(scene_type, full_context)
             return {
                 "narrative": narrative,
@@ -499,8 +502,9 @@ class NarrativeGenerator:
         for char_id, char in characters.items():
             char_name = char.get("name", char_id)
             char_status = char.get("status", "alive")
-            char_hp = char.get("hp", 0)
-            char_max_hp = char.get("max_hp", 1)
+            hp_data = char.get("hp", {}) if isinstance(char.get("hp"), dict) else {}
+            char_hp = hp_data.get("current", 0)
+            char_max_hp = hp_data.get("max", 1)
             char_level = char.get("level", 1)
             char_transformation = char.get("transformation", "")
             summary = {
@@ -902,7 +906,8 @@ Requisitos:
             self._system_prompt = None
 
     def _generate_with_llm(
-        self, scene_type: SceneType, context: dict, language: Language
+        self, scene_type: SceneType, context: dict, language: Language,
+        milestone_context: dict | None = None,
     ) -> str:
         """
         Use the LLM client to generate a narrative scene.
@@ -918,13 +923,40 @@ Requisitos:
 
         scene_type_str = scene_type.value.lower().replace("_", " ")
 
+        # Build milestone context addition if provided
+        milestone_section = ""
+        if milestone_context:
+            cm_id = milestone_context.get("current_milestone_id", "")
+            cm_type = milestone_context.get("current_milestone_type", "")
+            cm_desc = milestone_context.get("current_milestone_description", "")
+            scenes_in = milestone_context.get("scenes_in_milestone", 0)
+            max_scenes = milestone_context.get("max_scenes", 5)
+            pressure = milestone_context.get("progress_pressure", 0.0)
+
+            milestone_section = (
+                f"\n═══ PROGRESO DE LA HISTORIA ═══\n"
+                f"Etapa actual: {cm_id} ({cm_type})\n"
+                f"Objetivo: {cm_desc}\n"
+                f"Escenas en esta etapa: {scenes_in}/{max_scenes}\n"
+            )
+            if pressure >= 0.8:
+                milestone_section += "⚠️ Esta etapa debe resolverse AHORA. Avanza la trama.\n"
+            elif pressure >= 0.5:
+                milestone_section += "⏳ La trama debe avanzar hacia el siguiente hito.\n"
+            if cm_type == "climax":
+                milestone_section += "🎭 CLIMAX: Todo está en juego. Narrá con intensidad máxima.\n"
+            elif cm_type == "resolution":
+                milestone_section += "🌅 RESOLUCIÓN: Revelá las consecuencias y cerrá con fuerza.\n"
+            milestone_section += "═══\n"
+
         user_prompt = (
             f"You are the Dungeon Master narrating a D&D Fifth Edition game.\n"
             f"Generate a vivid, {mood} narrative for a {scene_type_str} scene.\n\n"
             f"Location: {location}\n"
             f"Characters present: {characters}\n"
             f"NPCs present: {npcs}\n"
-            f"Recent events: {recent}\n\n"
+            f"Recent events: {recent}\n"
+            f"{milestone_section}\n"
             "Requirements:\n"
             "- 2-4 sentences maximum\n"
             "- End with an open SITUATION that invites action (never end with a question mark)\n"

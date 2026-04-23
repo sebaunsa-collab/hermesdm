@@ -39,10 +39,10 @@ def _random_frame() -> str:
 
 def _build_animation_text(frame_index: int, character_name: str) -> str:
     """Build one animation frame text."""
-    _random_frame()
+    frame = _random_frame()
     return (
         f"🎲 *{character_name} tira dados...*\n"
-        f"`⚄ ⚁ ⚀ ⚃ ⚅ ⚅`  ← #{frame_index + 1}\n"
+        f"`{frame}`  ← #{frame_index + 1}\n"
         f"_rueda...rueda..._"
     )
 
@@ -102,22 +102,23 @@ def _build_final_text(
     )
 
 
-async def _dice_frame_edit(
-    context: "ContextTypes.DEFAULT_TYPE",
-    chat_id: int,
-    message_id: int,
-    frame_index: int,
-    character_name: str,
-    is_last_frame: bool,
-    final_text: str,
-    parse_mode: str = "Markdown",
-) -> None:
+async def _dice_frame_edit(context: "ContextTypes.DEFAULT_TYPE") -> None:
     """
     Edit one animation frame. If last frame, send the real result.
     Chains to next frame or final text via job_queue.
     """
     job = context.job
-    remaining_frames = job.data.get("remaining_frames", 0)
+    data = job.data or {}
+
+    chat_id = data["chat_id"]
+    message_id = data["message_id"]
+    frame_index = data["frame_index"]
+    character_name = data["character_name"]
+    remaining_frames = data.get("remaining_frames", 0)
+    final_text = data["final_text"]
+    parse_mode = data.get("parse_mode", "Markdown")
+
+    is_last_frame = remaining_frames <= 1
 
     if is_last_frame:
         # Final frame — show real result
@@ -134,7 +135,7 @@ async def _dice_frame_edit(
     )
 
     # Schedule next frame if not done
-    if not is_last_frame and remaining_frames > 1:
+    if not is_last_frame:
         context.application.job_queue.run_once(
             _dice_frame_edit,
             _FRAME_DELAY,

@@ -187,7 +187,7 @@ def generate_npcs(count: int = 3) -> dict:
     return npcs
 
 
-def generate_setup_with_ai(description: str, tone: str = "serious", setting: str = "fantasy") -> dict:
+def generate_setup_with_ai(description: str, tone: str = "serious", setting: str = "fantasy", pacing_level: str = "medium") -> dict:
     """
     Generate campaign setup (premise, hook, lore, factions, NPCs) using AI.
     Falls back to build_world() templates if AI is unavailable.
@@ -231,6 +231,13 @@ Generá:
 4. Una "main_threat": cuál es el conflicto central
 5. Facciones: 2-3 facciones en tensión (nombre, estado: DOMINANT/RISING/HIDDEN/etc.)
 6. NPCs iniciales: 2-3 NPCs relevantes con nombre, rol, y una línea de diálogo característica
+7. Clases temáticas: 3-5 nombres de clases de PJ que encajen en este setting (ej: para un puerto pirata podrían ser Corsario, Navegante, Contrabandista, Bucanero, Oficial). NO uses las clases default de D&D. Inventá nombres que hagan sentido para la descripción del DM.
+8. Equipo inicial temático: 3-5 objetos de starting equipment que encajen en el setting (ej: para horror: linterna de aceite, crucifijo de plata, diario manchado, laudano, daga de obsidiana). Cada item debe tener nombre, descripción corta de 1 línea, y si es consumible (true/false).
+9. Story arc: un arco narrativo con milestones. Según el pacing_level ({pacing_level}), generá:
+   - "short": 4 milestones (hook, rising_action, climax, resolution)
+   - "medium": 5 milestones (hook, rising_action_1, rising_action_2, climax, resolution)
+   - "long": 7 milestones (hook, rising_action_1, midpoint, rising_action_2, rising_action_3, climax, resolution)
+   Cada milestone necesita: id, type, description (qué debe pasar narrativamente en esa etapa, 1-2 oraciones).
 
 Respondé en español, en JSON con este formato exacto:
 {{
@@ -240,7 +247,17 @@ Respondé en español, en JSON con este formato exacto:
   "starting_location_desc": "...",
   "main_threat": "...",
   "factions": {{ "nombre_faccion": "ESTADO", ... }},
-  "npcs": [{{ "name": "...", "role": "...", "dialogue": "..." }}, ...]
+  "npcs": [{{ "name": "...", "role": "...", "dialogue": "..." }}, ...],
+  "classes": ["Clase1", "Clase2", "Clase3"],
+  "starting_equipment": [{{ "name": "...", "description": "...", "is_consumable": false }}, ...],
+  "story_arc": {{
+    "pacing_level": "{pacing_level}",
+    "milestones": [
+      {{ "id": "hook", "type": "hook", "description": "..." }},
+      {{ "id": "rising_action", "type": "rising_action", "description": "..." }},
+      ...
+    ]
+  }}
 }}
 No escribas nada más que el JSON."""
 
@@ -260,6 +277,25 @@ No escribas nada más que el JSON."""
 
         parsed = json.loads(raw)
 
+        # Extract classes from AI response or fallback to description extraction
+        classes = parsed.get("classes")
+        if not classes:
+            classes = extract_classes_from_text(description)
+        if not classes:
+            classes = _generate_themed_classes(setting, description)
+
+        # Build story arc from AI response
+        story_arc_data = parsed.get("story_arc")
+        if story_arc_data:
+            from dm.story_arc import create_story_arc_from_ai_response
+            story_arc = create_story_arc_from_ai_response(
+                pacing_level=story_arc_data.get("pacing_level", pacing_level),
+                ai_milestones=story_arc_data.get("milestones", []),
+            )
+        else:
+            from dm.story_arc import create_default_story_arc
+            story_arc = create_default_story_arc(pacing_level)
+
         return {
             "description": description,
             "premise": parsed.get("premise", ""),
@@ -267,6 +303,7 @@ No escribas nada más que el JSON."""
             "tone": tone,
             "setting_type": setting,
             "approved": False,
+            "classes": classes,
             "lore": {
                 "factions": parsed.get("factions", {}),
                 "main_threat": parsed.get("main_threat", ""),
@@ -274,29 +311,448 @@ No escribas nada más que el JSON."""
                 "starting_location_desc": parsed.get("starting_location_desc", ""),
                 "npcs": parsed.get("npcs", []),
             },
+            "starting_equipment": parsed.get("starting_equipment", []),
+            "story_arc": story_arc.to_dict(),
         }
 
     except Exception as e:
-        # Fallback: use template-based world builder
+        # Fallback: use template-based world builder, customized with description
         import warnings
+        import re
         warnings.warn(f"AI setup generation failed ({e}), falling back to templates")
 
+        # Parse key elements from the user's description
+        desc_lower = description.lower()
+        threat = ""
+        location = ""
+
+        # Extract threat/antagonist hints from description
+        threat_patterns = [
+            r"rey demonio",
+            r"rey humano",
+            r"dragón",
+            r"demon[io]",
+            r"villano",
+            r"corrupto",
+            r"tirano",
+            r"malvado",
+            r"amenaza",
+            r"dr.?king",
+            r"demon.?king",
+        ]
+        for pat in threat_patterns:
+            m = re.search(pat, desc_lower)
+            if m:
+                threat = m.group(0).capitalize()
+                break
+
+        # Detect setting type from description
+        if any(w in desc_lower for w in ["ciudad", "puerto", "reino", "palacio", "castillo"]):
+            location = "Ciudad amurallada"
+        elif any(w in desc_lower for w in ["bosque", "selva", "montaña", "cueva", "mazmorra"]):
+            location = "Tierras salvajes"
+        else:
+            location = "un lugar olvidado"
+
+        # Detect tone
+        detected_tone = tone
+        if any(w in desc_lower for w in ["serio", "político", "oscuro", "dark"]):
+            detected_tone = "dark"
+        elif any(w in desc_lower for w in ["épico", "heroico", "épico"]):
+            detected_tone = "epic"
+
+        # Build customized premise from description
+        premise = f"Los personajes son aventureros comprometidos con una misión peligrosa: {description.strip('.')}. Un conflicto de poder y traición los enfrentará a enemigos inesperados."
+
+        # Extract player roles from description if mentioned
+        roles = []
+        role_patterns = ["mesa redonda", "caballeros", "mercenarios", "espías", "aventu", "héroe"]
+        for pat in role_patterns:
+            if pat in desc_lower:
+                roles.append(pat)
+        role_str = ", ".join(roles) if roles else "aventuross"
+
+        hook = (
+            f"La amenaza se cierne sobre {location.lower()}. "
+            f"Una alianza oculta entre {threat or 'fuerzas oscuras'} y figuras de poder amenaza con destruir todo. "
+            f"Los {role_str} deben actuar antes de que sea tarde."
+        )
+
+        # Generate themed content for fallback
+        fallback_classes = _generate_themed_classes(setting, description)
+        fallback_npcs = _generate_themed_npcs(setting, description)
+        fallback_items = _generate_themed_items(setting, description)
+
         fallback = build_world(setting)
+        factions = fallback["world"].get("factions", {})
+
+        from dm.story_arc import create_default_story_arc
+        fallback_arc = create_default_story_arc(pacing_level)
+
         return {
             "description": description,
-            "premise": f"Los personajes son aventureros en {fallback['campaign']['name']}.",
-            "hook": fallback["world"].get("main_threat", "Una amenaza se cierne sobre el mundo."),
-            "tone": tone,
+            "premise": premise,
+            "hook": hook,
+            "tone": detected_tone,
             "setting_type": setting,
             "approved": False,
+            "classes": fallback_classes,
             "lore": {
-                "factions": fallback["world"].get("factions", {}),
-                "main_threat": fallback["world"].get("main_threat", ""),
-                "starting_location": fallback["campaign"].get("current_location", ""),
-                "starting_location_desc": fallback["world"].get("description", "")[:200],
-                "npcs": [],
+                "factions": factions,
+                "main_threat": threat or fallback["world"].get("main_threat", "Una amenaza se cierne sobre el mundo."),
+                "starting_location": location,
+                "starting_location_desc": f"{location} — {description[:100].strip()}. Un lugar donde el conflicto entre {threat or 'fuerzas oscuras'} y la justicia está a punto de estallar.",
+                "npcs": fallback_npcs,
             },
+            "starting_equipment": fallback_items,
+            "story_arc": fallback_arc.to_dict(),
         }
+
+
+def _generate_themed_classes(setting: str, description: str) -> list[str]:
+    """Generate themed class names based on setting and description keywords."""
+    desc_lower = description.lower()
+
+    # Keyword → class list mapping
+    themed: dict[str, list[str]] = {
+        # Maritime / pirate
+        "pirat": ["Corsario", "Navegante", "Contrabandista", "Bucanero", "Oficial de Marina"],
+        "puerto": ["Corsario", "Navegante", "Contrabandista", "Bucanero", "Oficial de Marina"],
+        "mar": ["Corsario", "Navegante", "Contrabandista", "Bucanero", "Oficial de Marina"],
+        "nave": ["Corsario", "Navegante", "Contrabandista", "Bucanero", "Oficial de Marina"],
+        # Urban / political
+        "ciudad": ["Espía", "Diplomático", "Asesino", "Ladrón", "Guardia"],
+        "politic": ["Espía", "Diplomático", "Asesino", "Ladrón", "Guardia"],
+        "corrupto": ["Espía", "Diplomático", "Asesino", "Ladrón", "Guardia"],
+        # Horror
+        "horror": ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"],
+        "terror": ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"],
+        "mansion": ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"],
+        # Sci-fi
+        "sci-fi": ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"],
+        "espacio": ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"],
+        "nave espacial": ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"],
+        # Wild west
+        "oeste": ["Pistolero", "Sheriff", "Forajido", "Gambler", "Cazador"],
+        # Medieval
+        "caballero": ["Caballero", "Menestral", "Clérigo", "Arquero", "Bardo"],
+        # Post-apocalyptic
+        "apocalipsis": ["Superviviente", "Radical", "Técnico", "Mercader", "Cazador"],
+        # Steampunk
+        "steampunk": ["Inventor", "Aviador", "Agente", "Alquimista", "Duelista"],
+        # Default fantasy
+        "fantasy": ["Guerrero", "Mago", "Pícaro", "Clérigo", "Explorador"],
+    }
+
+    # Check for keyword matches
+    for keyword, classes in themed.items():
+        if keyword in desc_lower or keyword in setting.lower():
+            return classes
+
+    # Generic fallback based on setting type
+    if setting == "scifi":
+        return ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"]
+    if setting == "horror":
+        return ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"]
+
+    return ["Guerrero", "Mago", "Pícaro", "Clérigo", "Explorador"]
+
+
+def _generate_themed_npcs(setting: str, description: str) -> list[dict]:
+    """Generate themed NPCs based on setting and description keywords.
+    Returns list of dicts: [{"name": "...", "role": "...", "dialogue": "..."}, ...]
+    """
+    desc_lower = description.lower()
+
+    themed_npcs: dict[str, list[dict]] = {
+        # Maritime / pirate
+        "pirat": [
+            {"name": "Capitán Barracuda", "role": "Capitán mercante corrupto", "dialogue": "El mar no perdona a los débiles, muchacho."},
+            {"name": "Marina la Cartógrafa", "role": "Navegante borracha con secretos", "dialogue": "He visto cosas en los mapas que no deberían existir."},
+            {"name": "Gusano", "role": "Contrabandista de ratas de puerto", "dialogue": "Tengo lo que necesitás... si el precio es correcto."},
+        ],
+        "puerto": [
+            {"name": "Capitán Barracuda", "role": "Capitán mercante corrupto", "dialogue": "El mar no perdona a los débiles, muchacho."},
+            {"name": "Marina la Cartógrafa", "role": "Navegante borracha con secretos", "dialogue": "He visto cosas en los mapas que no deberían existir."},
+            {"name": "Gusano", "role": "Contrabandista de ratas de puerto", "dialogue": "Tengo lo que necesitás... si el precio es correcto."},
+        ],
+        "mar": [
+            {"name": "Capitán Barracuda", "role": "Capitán mercante corrupto", "dialogue": "El mar no perdona a los débiles, muchacho."},
+            {"name": "Marina la Cartógrafa", "role": "Navegante borracha con secretos", "dialogue": "He visto cosas en los mapas que no deberían existir."},
+            {"name": "Gusano", "role": "Contrabandista de ratas de puerto", "dialogue": "Tengo lo que necesitás... si el precio es correcto."},
+        ],
+        "nave": [
+            {"name": "Capitán Barracuda", "role": "Capitán mercante corrupto", "dialogue": "El mar no perdona a los débiles, muchacho."},
+            {"name": "Marina la Cartógrafa", "role": "Navegante borracha con secretos", "dialogue": "He visto cosas en los mapas que no deberían existir."},
+            {"name": "Gusano", "role": "Contrabandista de ratas de puerto", "dialogue": "Tengo lo que necesitás... si el precio es correcto."},
+        ],
+        # Urban / political
+        "ciudad": [
+            {"name": "Lord Corvus", "role": "Noble conspirador", "dialogue": "La política es un juego de sangre disfrazado de banquetes."},
+            {"name": "Sombra", "role": "Espía del gremio de ladrones", "dialogue": "Te vi entrar. Te veré salir. Depende de vos cómo."},
+            {"name": "Magistrada Elara", "role": "Juez incorruptible (o eso dice)", "dialogue": "La ley es ciega, pero yo no."},
+        ],
+        "politic": [
+            {"name": "Lord Corvus", "role": "Noble conspirador", "dialogue": "La política es un juego de sangre disfrazado de banquetes."},
+            {"name": "Sombra", "role": "Espía del gremio de ladrones", "dialogue": "Te vi entrar. Te veré salir. Depende de vos cómo."},
+            {"name": "Magistrada Elara", "role": "Juez incorruptible (o eso dice)", "dialogue": "La ley es ciega, pero yo no."},
+        ],
+        "corrupto": [
+            {"name": "Lord Corvus", "role": "Noble conspirador", "dialogue": "La política es un juego de sangre disfrazado de banquetes."},
+            {"name": "Sombra", "role": "Espía del gremio de ladrones", "dialogue": "Te vi entrar. Te veré salir. Depende de vos cómo."},
+            {"name": "Magistrada Elara", "role": "Juez incorruptible (o eso dice)", "dialogue": "La ley es ciega, pero yo no."},
+        ],
+        # Horror
+        "horror": [
+            {"name": "Padre Ignatius", "role": "Sacerdote con fe quebrada", "dialogue": "Dios no entra en esa casa. Yo tampoco debería."},
+            {"name": "Dra. Voss", "role": "Médico forense obsesionado", "dialogue": "Las heridas... no fueron hechas por ningún animal que conozca."},
+            {"name": "El Niño del Sótano", "role": "Testimonial mudo", "dialogue": "..."},
+        ],
+        "terror": [
+            {"name": "Padre Ignatius", "role": "Sacerdote con fe quebrada", "dialogue": "Dios no entra en esa casa. Yo tampoco debería."},
+            {"name": "Dra. Voss", "role": "Médico forense obsesionado", "dialogue": "Las heridas... no fueron hechas por ningún animal que conozca."},
+            {"name": "El Niño del Sótano", "role": "Testimonial mudo", "dialogue": "..."},
+        ],
+        "mansion": [
+            {"name": "Padre Ignatius", "role": "Sacerdote con fe quebrada", "dialogue": "Dios no entra en esa casa. Yo tampoco debería."},
+            {"name": "Dra. Voss", "role": "Médico forense obsesionado", "dialogue": "Las heridas... no fueron hechas por ningún animal que conozca."},
+            {"name": "El Niño del Sótano", "role": "Testimonial mudo", "dialogue": "..."},
+        ],
+        # Sci-fi
+        "sci-fi": [
+            {"name": "Comandante Reyes", "role": "Oficial de la flota colonial", "dialogue": "Protocolo 7: si hay contacto, dispara primero. Pregunta después."},
+            {"name": "AXI-9", "role": "IA rebelde de estación", "dialogue": "Los humanos son interesantes. Frágiles, pero interesantes."},
+            {"name": "Dr. Chen", "role": "Xenobiólogo asustado", "dialogue": "No es un parásito. Es... una simbiosis. ¿Entendés?"},
+        ],
+        "espacio": [
+            {"name": "Comandante Reyes", "role": "Oficial de la flota colonial", "dialogue": "Protocolo 7: si hay contacto, dispara primero. Pregunta después."},
+            {"name": "AXI-9", "role": "IA rebelde de estación", "dialogue": "Los humanos son interesantes. Frágiles, pero interesantes."},
+            {"name": "Dr. Chen", "role": "Xenobiólogo asustado", "dialogue": "No es un parásito. Es... una simbiosis. ¿Entendés?"},
+        ],
+        "nave espacial": [
+            {"name": "Comandante Reyes", "role": "Oficial de la flota colonial", "dialogue": "Protocolo 7: si hay contacto, dispara primero. Pregunta después."},
+            {"name": "AXI-9", "role": "IA rebelde de estación", "dialogue": "Los humanos son interesantes. Frágiles, pero interesantes."},
+            {"name": "Dr. Chen", "role": "Xenobiólogo asustado", "dialogue": "No es un parásito. Es... una simbiosis. ¿Entendés?"},
+        ],
+        # Wild west
+        "oeste": [
+            {"name": "Sheriff McGraw", "role": "Pistolero retirado", "dialogue": "En este pueblo se respeta la ley. O se entierra."},
+            {"name": "Doña Rosa", "role": "Curandera con secretos", "dialogue": "El polvo se lleva muchas cosas. Pero no todo."},
+            {"name": "El Gringo", "role": "Forajido sin nombre", "dialogue": "No preguntes de dónde saqué esto. No te gustará la respuesta."},
+        ],
+        # Medieval
+        "caballero": [
+            {"name": "Sir Aldric", "role": "Caballero errante", "dialogue": "Honra antes que vida. Siempre."},
+            {"name": "Hermana Margot", "role": "Monja guerrera", "dialogue": "Dios perdona. Yo no."},
+            {"name": "Bardo Tomás", "role": "Trovador de taberna", "dialogue": "Cantaré tu historia... si es digna de cantarse."},
+        ],
+        # Post-apocalyptic
+        "apocalipsis": [
+            {"name": "Junker", "role": "Chatarrero con brazo mecánico", "dialogue": "Todo tiene valor si sabés cómo desarmarlo."},
+            {"name": "Madre Superiora", "role": "Líder de refugio subterráneo", "dialogue": "Agua pura. Niños seguros. Eso es todo lo que importa."},
+            {"name": "Rads", "role": "Superviviente con quemaduras", "dialogue": "He visto la Zona. No hay nada allí. Nada humano."},
+        ],
+        # Steampunk
+        "steampunk": [
+            {"name": "Lord Gearhart", "role": "Inventor excéntrico", "dialogue": "La ciencia es magia que funciona. Mi magia funciona *muy* bien."},
+            {"name": "Agente Cogsworth", "role": "Espía del Ministerio", "dialogue": "Tengo ojos en cada engranaje de esta ciudad."},
+            {"name": "Dra. Steamfield", "role": "Alquimista de vapor", "dialogue": "Las leyes de la naturaleza son... sugerencias."},
+        ],
+        # Default fantasy
+        "fantasy": [
+            {"name": "Erna", "role": "Tabernera con oídos atentos", "dialogue": "La cerveza está fría y los rumores calientes."},
+            {"name": "Vorn", "role": "Capitán de la guardia", "dialogue": "Órdenes son órdenes. Preguntame después."},
+            {"name": "Mira", "role": "Erudita de biblioteca", "dialogue": "El conocimiento es poder. El poder corrompe. Hacé las cuentas."},
+        ],
+    }
+
+    for keyword, npcs in themed_npcs.items():
+        if keyword in desc_lower or keyword in setting.lower():
+            return npcs
+
+    # Generic fallback
+    if setting == "scifi":
+        return [
+            {"name": "Comandante Reyes", "role": "Oficial de la flota colonial", "dialogue": "Protocolo 7: si hay contacto, dispara primero. Pregunta después."},
+            {"name": "AXI-9", "role": "IA rebelde de estación", "dialogue": "Los humanos son interesantes. Frágiles, pero interesantes."},
+            {"name": "Dr. Chen", "role": "Xenobiólogo asustado", "dialogue": "No es un parásito. Es... una simbiosis. ¿Entendés?"},
+        ]
+    if setting == "horror":
+        return [
+            {"name": "Padre Ignatius", "role": "Sacerdote con fe quebrada", "dialogue": "Dios no entra en esa casa. Yo tampoco debería."},
+            {"name": "Dra. Voss", "role": "Médico forense obsesionado", "dialogue": "Las heridas... no fueron hechas por ningún animal que conozca."},
+            {"name": "El Niño del Sótano", "role": "Testimonial mudo", "dialogue": "..."},
+        ]
+
+    return [
+        {"name": "Erna", "role": "Tabernera con oídos atentos", "dialogue": "La cerveza está fría y los rumores calientes."},
+        {"name": "Vorn", "role": "Capitán de la guardia", "dialogue": "Órdenes son órdenes. Preguntame después."},
+        {"name": "Mira", "role": "Erudita de biblioteca", "dialogue": "El conocimiento es poder. El poder corrompe. Hacé las cuentas."},
+    ]
+
+
+def _generate_themed_items(setting: str, description: str) -> list[dict]:
+    """Generate themed starting items based on setting and description keywords.
+    Returns list of Item-compatible dicts.
+    """
+    desc_lower = description.lower()
+
+    themed_items: dict[str, list[dict]] = {
+        # Maritime / pirate
+        "pirat": [
+            {"name": "Sable oxidado", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Hoja corta con empuñadura de hueso de ballena."},
+            {"name": "Pistola de chispa", "quantity": 1, "damage_dice": "1d8", "weight": 3.0, "description": "Arma de pólvora negra. Un tiro. Lento recarga.", "is_consumable": False},
+            {"name": "Brújula magnética", "quantity": 1, "weight": 0.5, "description": "Aguja que siempre apunta al Norte... casi siempre."},
+            {"name": "Ración de ron", "quantity": 2, "weight": 1.0, "description": "Botella de cristal opaco. Calma los nervios o los enciende.", "is_consumable": True},
+            {"name": "Mapa rasgado", "quantity": 1, "weight": 0.1, "description": "Mitad de un mapa del tesoro. La otra mitad está en manos equivocadas."},
+        ],
+        "puerto": [
+            {"name": "Sable oxidado", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Hoja corta con empuñadura de hueso de ballena."},
+            {"name": "Pistola de chispa", "quantity": 1, "damage_dice": "1d8", "weight": 3.0, "description": "Arma de pólvora negra. Un tiro. Lento recarga.", "is_consumable": False},
+            {"name": "Brújula magnética", "quantity": 1, "weight": 0.5, "description": "Aguja que siempre apunta al Norte... casi siempre."},
+            {"name": "Ración de ron", "quantity": 2, "weight": 1.0, "description": "Botella de cristal opaco. Calma los nervios o los enciende.", "is_consumable": True},
+            {"name": "Mapa rasgado", "quantity": 1, "weight": 0.1, "description": "Mitad de un mapa del tesoro. La otra mitad está en manos equivocadas."},
+        ],
+        "mar": [
+            {"name": "Sable oxidado", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Hoja corta con empuñadura de hueso de ballena."},
+            {"name": "Pistola de chispa", "quantity": 1, "damage_dice": "1d8", "weight": 3.0, "description": "Arma de pólvora negra. Un tiro. Lento recarga.", "is_consumable": False},
+            {"name": "Brújula magnética", "quantity": 1, "weight": 0.5, "description": "Aguja que siempre apunta al Norte... casi siempre."},
+            {"name": "Ración de ron", "quantity": 2, "weight": 1.0, "description": "Botella de cristal opaco. Calma los nervios o los enciende.", "is_consumable": True},
+            {"name": "Mapa rasgado", "quantity": 1, "weight": 0.1, "description": "Mitad de un mapa del tesoro. La otra mitad está en manos equivocadas."},
+        ],
+        "nave": [
+            {"name": "Sable oxidado", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Hoja corta con empuñadura de hueso de ballena."},
+            {"name": "Pistola de chispa", "quantity": 1, "damage_dice": "1d8", "weight": 3.0, "description": "Arma de pólvora negra. Un tiro. Lento recarga.", "is_consumable": False},
+            {"name": "Brújula magnética", "quantity": 1, "weight": 0.5, "description": "Aguja que siempre apunta al Norte... casi siempre."},
+            {"name": "Ración de ron", "quantity": 2, "weight": 1.0, "description": "Botella de cristal opaco. Calma los nervios o los enciende.", "is_consumable": True},
+            {"name": "Mapa rasgado", "quantity": 1, "weight": 0.1, "description": "Mitad de un mapa del tesoro. La otra mitad está en manos equivocadas."},
+        ],
+        # Urban / political
+        "ciudad": [
+            {"name": "Daga envenenada", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Hoja fina con veneno de sueño profundo."},
+            {"name": "Capa con capucha", "quantity": 1, "weight": 1.0, "description": "Seda negra que absorbe la luz. Ideal para seguir a alguien."},
+            {"name": "Moneda falsa", "quantity": 5, "weight": 0.1, "description": "Oro de apariencia perfecta. Funde en cobre al calentarlo.", "is_consumable": True},
+            {"name": "Pergamino sellado", "quantity": 1, "weight": 0.1, "description": "Documento con sello de cera. Contiene... algo incriminatorio."},
+        ],
+        "politic": [
+            {"name": "Daga envenenada", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Hoja fina con veneno de sueño profundo."},
+            {"name": "Capa con capucha", "quantity": 1, "weight": 1.0, "description": "Seda negra que absorbe la luz. Ideal para seguir a alguien."},
+            {"name": "Moneda falsa", "quantity": 5, "weight": 0.1, "description": "Oro de apariencia perfecta. Funde en cobre al calentarlo.", "is_consumable": True},
+            {"name": "Pergamino sellado", "quantity": 1, "weight": 0.1, "description": "Documento con sello de cera. Contiene... algo incriminatorio."},
+        ],
+        "corrupto": [
+            {"name": "Daga envenenada", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Hoja fina con veneno de sueño profundo."},
+            {"name": "Capa con capucha", "quantity": 1, "weight": 1.0, "description": "Seda negra que absorbe la luz. Ideal para seguir a alguien."},
+            {"name": "Moneda falsa", "quantity": 5, "weight": 0.1, "description": "Oro de apariencia perfecta. Funde en cobre al calentarlo.", "is_consumable": True},
+            {"name": "Pergamino sellado", "quantity": 1, "weight": 0.1, "description": "Documento con sello de cera. Contiene... algo incriminatorio."},
+        ],
+        # Horror
+        "horror": [
+            {"name": "Linterna de aceite", "quantity": 1, "weight": 1.0, "description": "Luz amarillenta. Se apaga cuando algo se acerca... a veces.", "is_consumable": True},
+            {"name": "Crucifijo de plata", "quantity": 1, "weight": 0.2, "description": "Bendecido hace siglos. La plata está desgastada por dedos ansiosos."},
+            {"name": "Diario manchado", "quantity": 1, "weight": 0.5, "description": "Páginas llenas de dibujos de ojos que no deberían existir."},
+            {"name": "Laudano", "quantity": 2, "weight": 0.2, "description": "Opio medicinal. Apaga el dolor... y la razón.", "is_consumable": True},
+            {"name": "Daga de obsidiana", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Piedra volcánica negra. Corta más que el acero en ciertos lugares."},
+        ],
+        "terror": [
+            {"name": "Linterna de aceite", "quantity": 1, "weight": 1.0, "description": "Luz amarillenta. Se apaga cuando algo se acerca... a veces.", "is_consumable": True},
+            {"name": "Crucifijo de plata", "quantity": 1, "weight": 0.2, "description": "Bendecido hace siglos. La plata está desgastada por dedos ansiosos."},
+            {"name": "Diario manchado", "quantity": 1, "weight": 0.5, "description": "Páginas llenas de dibujos de ojos que no deberían existir."},
+            {"name": "Laudano", "quantity": 2, "weight": 0.2, "description": "Opio medicinal. Apaga el dolor... y la razón.", "is_consumable": True},
+            {"name": "Daga de obsidiana", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Piedra volcánica negra. Corta más que el acero en ciertos lugares."},
+        ],
+        "mansion": [
+            {"name": "Linterna de aceite", "quantity": 1, "weight": 1.0, "description": "Luz amarillenta. Se apaga cuando algo se acerca... a veces.", "is_consumable": True},
+            {"name": "Crucifijo de plata", "quantity": 1, "weight": 0.2, "description": "Bendecido hace siglos. La plata está desgastada por dedos ansiosos."},
+            {"name": "Diario manchado", "quantity": 1, "weight": 0.5, "description": "Páginas llenas de dibujos de ojos que no deberían existir."},
+            {"name": "Laudano", "quantity": 2, "weight": 0.2, "description": "Opio medicinal. Apaga el dolor... y la razón.", "is_consumable": True},
+            {"name": "Daga de obsidiana", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Piedra volcánica negra. Corta más que el acero en ciertos lugares."},
+        ],
+        # Sci-fi
+        "sci-fi": [
+            {"name": "Pistola láser", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Modelo colonial estándar. Celda de energía: 50 disparos."},
+            {"name": "Escáner biométrico", "quantity": 1, "weight": 0.5, "description": "Detecta signos vitales a 50m. No distingue humano de... otra cosa."},
+            {"name": "Botiquín de campo", "quantity": 1, "weight": 1.0, "description": "Nanosuturas y analgésicos de síntesis. Sana 1d8+2 HP.", "is_consumable": True},
+            {"name": "Tablet de datos", "quantity": 1, "weight": 0.3, "description": "Pantalla agrietada. Contiene registros... que alguien borró mal."},
+        ],
+        "espacio": [
+            {"name": "Pistola láser", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Modelo colonial estándar. Celda de energía: 50 disparos."},
+            {"name": "Escáner biométrico", "quantity": 1, "weight": 0.5, "description": "Detecta signos vitales a 50m. No distingue humano de... otra cosa."},
+            {"name": "Botiquín de campo", "quantity": 1, "weight": 1.0, "description": "Nanosuturas y analgésicos de síntesis. Sana 1d8+2 HP.", "is_consumable": True},
+            {"name": "Tablet de datos", "quantity": 1, "weight": 0.3, "description": "Pantalla agrietada. Contiene registros... que alguien borró mal."},
+        ],
+        "nave espacial": [
+            {"name": "Pistola láser", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Modelo colonial estándar. Celda de energía: 50 disparos."},
+            {"name": "Escáner biométrico", "quantity": 1, "weight": 0.5, "description": "Detecta signos vitales a 50m. No distingue humano de... otra cosa."},
+            {"name": "Botiquín de campo", "quantity": 1, "weight": 1.0, "description": "Nanosuturas y analgésicos de síntesis. Sana 1d8+2 HP.", "is_consumable": True},
+            {"name": "Tablet de datos", "quantity": 1, "weight": 0.3, "description": "Pantalla agrietada. Contiene registros... que alguien borró mal."},
+        ],
+        # Wild west
+        "oeste": [
+            {"name": "Revólver seis-shooter", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Colt Peacekeeper. Madera desgastada por sudor y pólvora."},
+            {"name": "Rifle de palanca", "quantity": 1, "damage_dice": "1d10", "weight": 5.0, "description": "Winchester 73. Preciso a 100 yardas. Lento recarga."},
+            {"name": "Sombrero de vaquero", "quantity": 1, "weight": 0.5, "description": "Cuero curtido por el sol. Oculta los ojos. Perfecto."},
+            {"name": "Caja de cerillas", "quantity": 1, "weight": 0.1, "description": "Fósforos de seguridad. Prenden en cualquier clima.", "is_consumable": True},
+        ],
+        # Medieval
+        "caballero": [
+            {"name": "Espada larga", "quantity": 1, "damage_dice": "1d8", "weight": 3.0, "description": "Acero templado. Empuñadura de cuero desgastado por la batalla."},
+            {"name": "Armadura de cuero", "quantity": 1, "armor_class": 11, "weight": 10.0, "description": "Cuero endurecido con cera. Flexible y silencioso."},
+            {"name": "Escudo de madera", "quantity": 1, "weight": 6.0, "description": "Roble reforzado con aros de hierro. Lleva el escudo de tu casa."},
+            {"name": "Raciones de viaje", "quantity": 3, "weight": 1.5, "description": "Pan duro, queso seco, carne salada. Sobrevive una semana.", "is_consumable": True},
+        ],
+        # Post-apocalyptic
+        "apocalipsis": [
+            {"name": "Tubo de metal", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Tubo de escape reforzado. Simple, pesado, efectivo."},
+            {"name": "Máscara antigás", "quantity": 1, "weight": 1.0, "description": "Filtro al 40%. Protege contra polvo radiactivo ligero."},
+            {"name": "Lata de comida", "quantity": 2, "weight": 0.5, "description": "Frijoles en salsa de tomate. Caducidad: hace 20 años. Aún comestible... probablemente.", "is_consumable": True},
+            {"name": "Botella de agua", "quantity": 1, "weight": 1.0, "description": "Contenedor oxidado. Agua filtrada. No mires de dónde viene.", "is_consumable": True},
+        ],
+        # Steampunk
+        "steampunk": [
+            {"name": "Pistola de vapor", "quantity": 1, "damage_dice": "1d8", "weight": 3.0, "description": "Presión de vapor en cilindro de cobre. Silbido antes del disparo."},
+            {"name": "Gafas de visión nocturna", "quantity": 1, "weight": 0.5, "description": "Lentes azogados con lentes de aumento. Ven en la oscuridad... con estilo."},
+            {"name": "Kit de reparación", "quantity": 1, "weight": 2.0, "description": "Llaves inglesas, engranajes de repuesto, cinta de latón.", "is_consumable": True},
+            {"name": "Poción de adrenalina", "quantity": 1, "weight": 0.2, "description": "Inyección de vapor concentrado. +2 STR por 1 minuto. Colapso después.", "is_consumable": True},
+        ],
+        # Default fantasy
+        "fantasy": [
+            {"name": "Espada corta", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Hoja de acero con empuñadura gastada. Confiable."},
+            {"name": "Armadura de cuero", "quantity": 1, "armor_class": 11, "weight": 10.0, "description": "Pieles curtidas cosidas con tripa. Huele a cuero viejo."},
+            {"name": "Poción de curación menor", "quantity": 2, "weight": 0.5, "description": "Líquido rojizo que burbujea. Sana 2d4+2 HP.", "is_consumable": True, "is_magic": True},
+            {"name": "Antorcha", "quantity": 3, "weight": 1.0, "description": "Madera resinosa envuelta en trapo. 1 hora de luz.", "is_consumable": True},
+            {"name": "Raciones", "quantity": 5, "weight": 2.5, "description": "Fruta seca, nueces, carne salada. No es gourmet, pero calma el hambre.", "is_consumable": True},
+        ],
+    }
+
+    for keyword, items in themed_items.items():
+        if keyword in desc_lower or keyword in setting.lower():
+            return items
+
+    # Generic fallback
+    if setting == "scifi":
+        return [
+            {"name": "Pistola láser", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Modelo colonial estándar. Celda de energía: 50 disparos."},
+            {"name": "Escáner biométrico", "quantity": 1, "weight": 0.5, "description": "Detecta signos vitales a 50m. No distingue humano de... otra cosa."},
+            {"name": "Botiquín de campo", "quantity": 1, "weight": 1.0, "description": "Nanosuturas y analgésicos de síntesis. Sana 1d8+2 HP.", "is_consumable": True},
+            {"name": "Tablet de datos", "quantity": 1, "weight": 0.3, "description": "Pantalla agrietada. Contiene registros... que alguien borró mal."},
+        ]
+    if setting == "horror":
+        return [
+            {"name": "Linterna de aceite", "quantity": 1, "weight": 1.0, "description": "Luz amarillenta. Se apaga cuando algo se acerca... a veces.", "is_consumable": True},
+            {"name": "Crucifijo de plata", "quantity": 1, "weight": 0.2, "description": "Bendecido hace siglos. La plata está desgastada por dedos ansiosos."},
+            {"name": "Diario manchado", "quantity": 1, "weight": 0.5, "description": "Páginas llenas de dibujos de ojos que no deberían existir."},
+            {"name": "Laudano", "quantity": 2, "weight": 0.2, "description": "Opio medicinal. Apaga el dolor... y la razón.", "is_consumable": True},
+            {"name": "Daga de obsidiana", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Piedra volcánica negra. Corta más que el acero en ciertos lugares."},
+        ]
+
+    return [
+        {"name": "Espada corta", "quantity": 1, "damage_dice": "1d6", "weight": 2.0, "description": "Hoja de acero con empuñadura gastada. Confiable."},
+        {"name": "Armadura de cuero", "quantity": 1, "armor_class": 11, "weight": 10.0, "description": "Pieles curtidas cosidas con tripa. Huele a cuero viejo."},
+        {"name": "Poción de curación menor", "quantity": 2, "weight": 0.5, "description": "Líquido rojizo que burbujea. Sana 2d4+2 HP.", "is_consumable": True, "is_magic": True},
+        {"name": "Antorcha", "quantity": 3, "weight": 1.0, "description": "Madera resinosa envuelta en trapo. 1 hora de luz.", "is_consumable": True},
+        {"name": "Raciones", "quantity": 5, "weight": 2.5, "description": "Fruta seca, nueces, carne salada. No es gourmet, pero calma el hambre.", "is_consumable": True},
+    ]
 
 
 def _get_dialogue_style(disposition: str) -> str:

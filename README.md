@@ -229,22 +229,46 @@
 
 ```bash
 # 1. Clonar e instalar
-git clone https://github.com/sebaunsa-collab/hermesdm.git
-cd hermesdm
-pip install -e .
+$ git clone https://github.com/sebaunsa-collab/hermesdm.git
+$ cd hermesdm
+$ pip install -e .
 
 # 2. Configurar tokens
-cp .env.example .env
+$ cp .env.example .env
 # ✏️  Editar .env y poner:
-#   TELEGRAM_BOT_TOKEN=tu_token_de_botfather
+#   TELEGRAM_BOT_TOKEN=tu_tok...ther
 #   MINIMAX_API_KEY=***  (opcional, usa Pollinations si no está)
 
 # 3. Correr
-hermesdm
+$ hermesdm
 # O directamente: python -m bot.telegram_handler
 
 # 4. Abrí Telegram → buscá tu bot → /start
 ```
+
+### 🌐 Web Companion (opcional)
+
+Dashboard visual para ver la partida en el navegador. Se instala con un flag:
+
+```bash
+# Instalar bot + web companion
+$ python3 scripts/install.py --group-id -1003916745496 --with-web
+
+# Levantar bot
+$ dm gateway start
+
+# Levantar web (en otra terminal)
+$ hermesdm-web
+# → http://localhost:8080
+```
+
+O con Docker:
+
+```bash
+$ cd web && docker compose up -d
+```
+
+El web companion es **read-only** — muestra personajes, historial, quests e imágenes en tiempo real. No reemplaza Telegram, lo complementa.
 
 ### ⚙️ Requisitos
 
@@ -259,102 +283,72 @@ hermesdm
 
 ## 🎯 Guía de Comandos
 
-### 🏠 Inicio de Partida
+### 🏠 Setup & Inicio
 | Comando | Descripción |
 |---------|-------------|
-| `/start` | Lanzar el wizard de nueva campaña |
+| `/start` | Mensaje de bienvenida y guía rápida |
+| `/setup <descripción>` | Crear nueva campaña con AI (ej: `/setup dark fantasy en un puerto corrupto`) |
+| `/newgame` | **DEPRECATED** — redirige a `/setup` |
+| `/join <nombre> <clase> [nivel]` | Crear personaje y unirse a la campaña |
+| `/begin` | **Iniciar la aventura** — genera escena inicial de narrativa |
 | `/campaign` | Ver info de la campaña activa |
-| `/newgame` | Reiniciar y empezar campaña fresca |
+| `/resume` | Reanudar la última campaña |
 | `/end` | Terminar sesión — genera epílogo + imagen |
-| `/settings` | Cambiar dificultad, tono, provider de imágenes |
+| `/quit` / `/exit` | Salir del modo DM |
+| `/audit [límite]` | Ver eventos de audit (admin) |
 
-### 👤 Personajes
+### 👤 Personaje
 | Comando | Descripción |
 |---------|-------------|
-| `/create <nombre> <clase>` | Crear personaje (Nv 1, standard array) |
-| `/delete <nombre>` | Eliminar personaje |
-| `/chars` | Listar todos los personajes |
-| `/char <nombre>` | Hoja de personaje completa |
-| `/hp <nombre> [valor]` | Ver o modificar HP |
-| `/xp <nombre> [valor]` | Ver o modificar XP |
-| `/levelup <nombre>` | Subir de nivel (recalcula HP automático) |
-| `/conditions <nombre> [add/remove]` | Condiciones (poisoned, stunned...) |
-| `/deathsave <nombre> [success/fail]` | Saving throw de muerte |
-| `/rest` | Descanso largo (recupera todo) |
-| `/shortrest` | Descanso corto (1 hit die + MOD CON) |
+| `/status` | Resumen de tu personaje (HP, AC, condiciones) |
+| `/hp` | Info detallada de HP |
+| `/inventory` | Ver inventario |
+| `/give <personaje> <item> [cant]` | Transferir item a otro jugador |
 
-### 🎒 Inventario
+### ⚔️ Combate & Acciones
 | Comando | Descripción |
 |---------|-------------|
-| `/inventory <nombre>` | Mostrar inventario |
-| `/item <nombre> <item>` | Agregar item |
-| `/give <nombre> <item>` | Alias para `/item` |
-| `/drop <nombre> <item>` | Remover item |
-| `/equip <nombre> <item>` | Equipar item |
-| `/unequip <nombre> [item]` | Desequipar item(s) |
+| `/j <acción>` / `/attack <objetivo> [adv\|dis]` | Atacar o realizar acción narrativa |
+| `/cast <hechizo> [objetivo]` | Lanzar hechizo (consume slot) |
+| `/skill <habilidad> <dc>` | Skill check |
+| `/roll [dado]` | Tirar dados (ej: `2d6+3`, `1d20+5`) |
+| `/save` | Saving throw (delegado) |
+| `/startcombat` / `/begincombat [enemigo1] ...` | Iniciar combate manual |
+| `/endcombat` | Terminar combate activo |
+| `/endturn` | Pasar turno (con countdown) |
 
-### 🎲 Dados & Chequeos
+### 🧙 Mundo & NPCs
 | Comando | Descripción |
 |---------|-------------|
-| `/roll <dado>` | Tirar dados (ej: `2d6+3`, `1d20+5`) |
-| `/r <dado>` | Alias corto |
-| `/flip` | Moneda (1d2) |
-| `/check <stat> [adv/dis]` | Chequeo de skill (str, dex, con...) |
-| `/save <stat> [dc]` | Saving throw (default DC 10) |
-
-### ✨ Magia & Spellcasting
-| Comando | Descripción |
-|---------|-------------|
-| `/cast <nombre> <spell> [target]` | Lanzar hechizo (consume slot si aplica) |
-| `/spells` | Listar hechizos disponibles por nivel |
-
-**Spells disponibles:**
-- **Cantrips:** Fire Bolt 🔥, Sacred Flame ✨, Shocking Grasp ⚡, Mind Sliver 🧠, Thaumaturgy 📢
-- **Nv 1:** Magic Missile 🎯, Guiding Bolt 🌟, Healing Word 💚, Thunderwave 💨, Shield 🛡️, Sleep 😴
-- **Nv 2:** Scorching Ray 🔴, Spiritual Weapon ⚔️, Hold Person ⏸️, Misty Step 💨
-- **Nv 3:** Fireball 💥, Counterspell 🚫, Mass Healing Word 💖
-- **Nv 4:** Polymorph 🐉, Wall of Fire 🔥
-- **Nv 5:** Cone of Cold ❄️, Flame Strike 🌋
-
-**Sistema de Spell Slots:**
-| Clase | Nv1 | Nv2 | Nv3 | Nv4 | Nv5 |
-|-------|-----|-----|-----|-----|-----|
-| 🧙 Wizard | 4 | 3 | 3 | 3 | 3 |
-| ⛪ Cleric/Druid/Bard | 4 | 3 | 3 | 3 | 3 |
-| ⚔️ Paladin/Ranger | 4 | 3 | 3 | 2 | 2 |
-| 🔮 Warlock | Pact slot (short rest) | — | — | — | — |
-
-### ⚔️ Combate
-| Comando | Descripción |
-|---------|-------------|
-| `/combat` | Estado del combate activo |
-| `/join` | Unirse al combate |
-| `/attack <target>` | Atacar (alias: `/j`) |
-| `/endturn` | Terminar tu turno |
-| `/flee` | Huir del combate |
-| `/status` | HP, AC, condiciones del grupo |
-| `/summon <nombre> [tipo]` | Invocar monstruo genérico |
-| `/monster <nombre> [HP] [AC]` | Invocar monstruo custom |
-| `/remove <nombre>` | Remover criatura del combate |
-| `/monsters` | Listar monstruos en combate |
-
-### 🧙 NPCs
-| Comando | Descripción |
-|---------|-------------|
-| `/npc <nombre>` | Consultar o crear NPC |
-| `/npcs` | Listar NPCs activos |
-| `/npcnote <nombre> <nota>` | Agregar nota del DM sobre NPC |
-| `/talk <npc> <mensaje>` | Hablar con un NPC (diálogo LLM) |
+| `/talk <npc> <mensaje>` | Hablar con un NPC |
+| `/npcs` | Listar NPCs persistentes |
 | `/npcsearch <query>` | Buscar NPCs por nombre/título |
-| `/npcmemory <nombre> <key> <valor>` | Registrar memoria sobre NPC |
+| `/npcnote <nombre> <nota>` | Agregar nota del DM sobre NPC |
+| `/npcmemory <nombre> <clave> <valor>` | Registrar memoria sobre NPC |
+| `/map` | Ver ubicación actual |
+| `/quests` | Ver quests activas y completadas |
+| `/recap` | Resumen de la historia |
 
 ### 🖼️ Narración & Imágenes
 | Comando | Descripción |
 |---------|-------------|
-| `/act <accion>` | Narrar una acción en el mundo |
-| `/scene <descripcion>` | Describir la escena actual |
-| `/image <prompt>` | Generar imagen manualmente |
-| `/sceneimage` | Auto-generar imagen de la escena actual |
+| `/imagen` / `/image` | Generar imagen de la escena actual |
+| `/me <acción>` | Narrar acción sin tirar dados |
+| `/countdown <segundos> <personaje>` | Demo de countdown con barra de progreso |
+
+### ❓ Ayuda
+| Comando | Descripción |
+|---------|-------------|
+| `/help` | Lista completa de comandos |
+
+**Flujo correcto de inicio:**
+```
+1. DM: /setup "quiero una campaña dark fantasy..."
+2. DM: "perfecto" (o "arrancamos", "si", "dale", "ok")
+3. Jugadores: /join Valdric fighter 3
+4. DM: /begin  ← ¡Inicia la aventura con narrativa inicial!
+5. Jugadores: /j ataco al goblin
+```
 
 ---
 
@@ -489,6 +483,12 @@ hermesdm/
 │
 ├── state/                        # 💾 Persistencia
 │   └── state_manager.py         # Lee/escribe JSON, validate_state()
+│
+├── web/                          # 🌐 Dashboard visual (opcional)
+│   ├── server.py                # FastAPI — lee state.json, expone API + SSE
+│   ├── static/index.html        # UI vanilla JS — dark fantasy theme
+│   ├── docker-compose.yml       # Docker one-liner
+│   └── requirements.txt         # fastapi, uvicorn, sse-starlette
 │
 ├── config.yaml                   # ⚙️ Configuración del bot
 ├── .env.example                  # 🔑 Template de variables de entorno

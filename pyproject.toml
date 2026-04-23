@@ -43,6 +43,11 @@ hermesdm = "bot.telegram_handler:main"
 where = ["."]
 include = ["bot*", "dm*", "state*"]
 
+# campaign_settings.py lives at project root — include it as a root package file
+# so "from campaign_settings import X" works after pip install -e .
+[tool.setuptools.package-data]
+"" = ["campaign_settings.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

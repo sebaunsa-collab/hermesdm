@@ -1,0 +1,12 @@
+services:
+  hermesdm-web:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ~/.hermes/hermesdm/campaigns:/data/campaigns
+    environment:
+      - HERMESDM_STATE_DIR=/data/campaigns
+      - HOST=0.0.0.0
+      - PORT=8080
+    restart: unless-stopped

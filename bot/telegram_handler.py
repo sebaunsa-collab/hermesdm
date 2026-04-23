@@ -66,8 +66,9 @@ from bot.turn_manager import (
     start_combat,
 )
 from dm.image_prompt_builder import build_closure_image_prompt
-from dm.narrative_generator import NarrativeGenerator
+from dm.narrative_generator import Language, NarrativeGenerator, SceneType
 from state.state_manager import (
+    append_history,
     campaign_exists,
     get_settings,
     list_campaigns,
@@ -168,7 +169,13 @@ class ChatState:
 
     characters: dict[str, Character] = field(default_factory=dict)
     """
-    Characters registered in this chat (player_name -> Character).
+    Characters registered in this chat (character_name_lower -> Character).
+    """
+
+    telegram_characters: dict[int, str] = field(default_factory=dict)
+    """
+    Reverse mapping: telegram_user_id -> character_name_lower.
+    Populated on /join so /j can find the right character reliably.
     """
 
     combat_state: CombatState | None = None
@@ -211,6 +218,13 @@ class ChatState:
 
     def character_for(self, player_name: str) -> Character | None:
         return self.characters.get(player_name.lower())
+
+    def character_for_tg_id(self, tg_id: int) -> Character | None:
+        """Find character by Telegram user ID (primary lookup for /j)."""
+        char_key = self.telegram_characters.get(tg_id)
+        if char_key:
+            return self.characters.get(char_key)
+        return None
 
     def active_character_names(self) -> list[str]:
         return list(self.characters.keys())
@@ -404,33 +418,51 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help."""
     try:
         help_text = textwrap.dedent("""
-            *HermesDM Commands*
+            🎲 *HermesDM — Comandos*
 
-            *Campaign*
-            /newgame [fantasy|scifi|horror] — Create a new campaign
-            /campaign — View active campaign details
-            /join <name> <class> [level] — Add your character
-            /map — View current location
-            /quests — View active quests
-            /recap — Story so far
-            /resume — Resume last session
+            *🎭 Campaña*
+            /setup <descripcion> — Crear nueva campaña (ej: `/setup dark fantasy en un puerto corrupto`)
+            /begin — Iniciar la aventura (después de /setup + /join)
+            /campaign — Ver detalles de la campaña activa
+            /recap — Resumen de la historia hasta ahora
+            /resume — Retomar última sesión
+            /save — Guardar estado manualmente
+            /end — Finalizar campaña (epílogo + cierre)
+            /quit /exit — Salir de la campaña
 
-            *Character*
-            /status — Character summary
-            /hp — Detailed HP info
-            /inventory — View inventory
-            /skill <name> <dc> — Make a skill check
-            /save <stat> <dc> — Make a saving throw
+            *👤 Personaje*
+            /join <nombre> <clase> [nivel] — Unir personaje (ej: `/join Valdric fighter 3`)
+            /status — Ficha resumida de tu personaje
+            /hp — HP detallado (current/max/temp/death saves)
+            /inventory — Inventario y equipo
+            /skill <nombre> <dc> — Tirada de habilidad (ej: `/skill perception 15`)
+            /save <stat> <dc> — Tirada de salvación (ej: `/save dex 12`)
 
-            *Combat*
-            /attack <target> [adv|dis] — Start an attack (then /roll to resolve)
-            /cast <spell> <target> — Cast a spell (then /roll to resolve)
-            /endturn — End your turn
-            /roll <dice> — Roll dice / confirm pending action
+            *⚔️ Combate*
+            /attack <objetivo> [adv|dis] — Iniciar ataque (luego /roll para resolver)
+            /cast <hechizo> <objetivo> — Lanzar hechizo (luego /roll para resolver)
+            /j <accion> / /act <accion> — Acción libre del jugador (ej: `/j ataco al dragon`)
+            /endturn — Finalizar turno
+            /startcombat /begincombat — Iniciar combate con iniciativa
+            /endcombat — Finalizar combate
+            /countdown <seg> <pj> — Timer de turno con barra
 
-            *Info*
-            /talk <npc> <message> — Talk to an NPC
-            /help — Show this message
+            *🗺️ Mundo*
+            /map — Ubicación actual
+            /quests — Misiones activas y completadas
+            /talk <npc> <mensaje> — Hablar con un PNJ
+            /npcs — Listar PNJs conocidos
+            /npcsearch <nombre> — Buscar PNJ por nombre
+            /npcnote <npc> <nota> — Agregar nota sobre un PNJ
+            /npcmemory <npc> — Ver memoria/historial de un PNJ
+
+            *🎨 Otros*
+            /me <accion> — Acción narrativa sin dados (ej: `/me se esconde detrás de la roca`)
+            /imagen /image <prompt> — Generar imagen de escena
+            /roll <dados> — Tirar dados (ej: `/roll 2d6+3`)
+            /audit — Ver log de auditoría de la campaña
+            /configuracion — Configuración de la campaña
+            /help — Mostrar este mensaje
         """).strip()
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -457,10 +489,10 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle /setup [descripción] — inicia el flujo de setup de campaña.
+    Handle /setup <descripción> — inicia el flujo de setup de campaña.
 
-    Sin args: pide descripción al DM (entra en modo describing).
-    Con args: genera premise + lore y muestra preview.
+    Siempre requiere argumentos (funciona en grupos con Privacy Mode).
+    Ejemplo: /setup quiero una campaña dark fantasy en un puerto corrupto
     """
     try:
         from dm.world_builder import generate_setup_with_ai
@@ -482,89 +514,105 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         description = " ".join(context.args).strip() if context.args else ""
 
-        if description:
-            # Args provistos → generar directamente
-            cs.setup_mode = True
-            cs.setup_state = "generating"
-            cs.pending_setup = {
-                "description": description,
-                "tone": "serious",
-                "setting_type": "fantasy",
-            }
-            chat_data["_hermes_state"] = cs
+        # Extract pacing level from description
+        pacing_level = "medium"
+        if "--short" in description or "--pacing short" in description:
+            pacing_level = "short"
+            description = description.replace("--short", "").replace("--pacing short", "").strip()
+        elif "--long" in description or "--pacing long" in description:
+            pacing_level = "long"
+            description = description.replace("--long", "").replace("--pacing long", "").strip()
+        elif "--medium" in description or "--pacing medium" in description:
+            pacing_level = "medium"
+            description = description.replace("--medium", "").replace("--pacing medium", "").strip()
 
-            # Mensaje de generando
-            gen_msg = await update.message.reply_text("🎲 Generando con AI...")
-
-            try:
-                setup_data = generate_setup_with_ai(description)
-                cs.pending_setup = setup_data
-                cs.setup_state = "preview"
-                chat_data["_hermes_state"] = cs
-
-                # Guardar campaign en estado setup
-                campaign_id = cs.active_campaign or f"campaign_{uuid.uuid4().hex[:8]}"
-                if not cs.active_campaign:
-                    from state.state_manager import new_state, save_state
-
-                    new_st = new_state(campaign_id, "Nueva Campaña", "fantasy")
-                    save_state(campaign_id, new_st)
-                    cs.active_campaign = campaign_id
-                    chat_data["_hermes_state"] = cs
-
-                # Guardar setup en state
-                from state.state_manager import load_state, save_state
-
-                st = load_state(campaign_id)
-                st["setup"] = setup_data
-                save_state(campaign_id, st)
-
-                # Editar mensaje de generando → preview
-                preview_text = _format_setup_preview(setup_data)
-                await gen_msg.edit_text(preview_text, parse_mode=ParseMode.MARKDOWN)
-
-                # Enviar preview al DM por DM también
-                await context.bot.send_message(
-                    chat_id=dm_user_id,
-                    text=preview_text + "\n\n_Editá o aprobá desde el grupo_",
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-
-                # Pedir aprobación
-                await update.message.reply_text(
-                    "📋 *Preview generado.*\n\n"
-                    "Editá campos con:\n"
-                    "`edit premisa: ...`\n"
-                    "`edit hook: ...`\n"
-                    "`edit tono: dark`\n\n"
-                    "Cuando estés listo: `perfecto` / `arrancamos`\n"
-                    "Para cancelar: `cancel`",
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-
-            except Exception as ai_err:
-                log.exception("AI generation failed")
-                cs.setup_state = "idle"
-                cs.setup_mode = False
-                chat_data["_hermes_state"] = cs
-                await gen_msg.edit_text(
-                    f"⚠️ No pude conectar con AI. Usando template.\n`{ai_err}`",
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-        else:
-            # Sin args → entrar en modo describing
-            cs.setup_mode = True
-            cs.setup_state = "describing"
-            chat_data["_hermes_state"] = cs
+        if not description:
             await update.message.reply_text(
-                "🎭 *Setup de Campaña*\n\n"
-                "📝 Describí tu campaña en texto libre.\n\n"
+                "⚠️ *Setup de Campaña*\n\n"
+                "Usá: `/setup <descripción>`\n\n"
                 "Ejemplos:\n"
-                "- `quiero algo dark fantasy, ciudad portuaria corrupta con contrabandistas`\n"
-                "- `un oneshot en una mazmorra, tono serio`\n\n"
-                "Incluí: tono, setting, tipo de aventura, lo que quieras.",
+                "- `/setup dark fantasy en un puerto corrupto`\n"
+                "- `/setup oneshot de terror en una mansión abandonada`\n\n"
+                "Opciones de duración:\n"
+                "- `--short` → ~5 sesiones (one-shot)\n"
+                "- `--medium` → ~10 sesiones (default)\n"
+                "- `--long` → ~20 sesiones (campaña épica)\n\n"
+                "Incluí: tono, setting, tipo de aventura.",
                 parse_mode=ParseMode.MARKDOWN,
             )
+            return
+
+        # Args provistos → generar directamente
+        cs.setup_mode = True
+        cs.setup_state = "generating"
+        cs.pending_setup = {
+            "description": description,
+            "tone": "serious",
+            "setting_type": "fantasy",
+            "pacing_level": pacing_level,
+        }
+        chat_data["_hermes_state"] = cs
+
+        # Mensaje de generando
+        gen_msg = await update.message.reply_text("🎲 Generando con AI...")
+
+        try:
+            setup_data = generate_setup_with_ai(description, pacing_level=pacing_level)
+            setup_data["pacing_level"] = pacing_level
+            cs.pending_setup = setup_data
+            cs.setup_state = "preview"
+            chat_data["_hermes_state"] = cs
+
+            # Guardar campaign en estado setup
+            campaign_id = cs.active_campaign or f"campaign_{uuid.uuid4().hex[:8]}"
+            if not cs.active_campaign:
+                from state.state_manager import new_state, save_state
+
+                new_st = new_state(campaign_id, "Nueva Campaña", "fantasy")
+                save_state(campaign_id, new_st)
+                cs.active_campaign = campaign_id
+                chat_data["_hermes_state"] = cs
+
+            # Guardar setup en state
+            from state.state_manager import load_state, save_state
+
+            st = load_state(campaign_id)
+            st["setup"] = setup_data
+            save_state(campaign_id, st)
+
+            # Editar mensaje de generando → preview
+            preview_text = _format_setup_preview(setup_data)
+            await gen_msg.edit_text(preview_text, parse_mode=ParseMode.MARKDOWN)
+
+            # Enviar preview al DM por DM también
+            await context.bot.send_message(
+                chat_id=dm_user_id,
+                text=preview_text + "\n\n_Editá o aprobá desde el grupo_",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            # Pedir aprobación
+            await update.message.reply_text(
+                "📋 *Preview generado.*\n\n"
+                "Editá campos con:\n"
+                "`edit premisa: ...`\n"
+                "`edit hook: ...`\n"
+                "`edit tono: dark`\n\n"
+                "Cuando estés listo: `/perfecto` / `/arrancamos`\n"
+                "Para cancelar: `/cancel`",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+        except Exception as ai_err:
+            log.exception("AI generation failed")
+            cs.setup_state = "idle"
+            cs.setup_mode = False
+            chat_data["_hermes_state"] = cs
+            await gen_msg.edit_text(
+                f"⚠️ No pude conectar con AI. Usando template.\n`{ai_err}`",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
     except Exception as e:
         log.exception("cmd_setup error")
         await update.message.reply_text(f"Error: {e}")
@@ -716,6 +764,38 @@ async def _handle_setup_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
 
+async def _cmd_approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """CommandHandler wrapper for /perfecto and /arrancamos."""
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+        if not cs.setup_mode:
+            await update.message.reply_text("No hay un setup activo. Usá /setup para empezar.")
+            return
+        await _approve_setup(update, context, cs)
+    except Exception as e:
+        log.exception("_cmd_approve_setup error")
+        await update.message.reply_text(f"Error: {e}")
+
+
+async def _cmd_cancel_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """CommandHandler wrapper for /cancel_setup."""
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+        if not cs.setup_mode:
+            await update.message.reply_text("No hay un setup activo para cancelar.")
+            return
+        cs.setup_mode = False
+        cs.setup_state = "idle"
+        cs.pending_setup = None
+        chat_data["_hermes_state"] = cs
+        await update.message.reply_text("❌ Setup cancelado.")
+    except Exception as e:
+        log.exception("_cmd_cancel_setup error")
+        await update.message.reply_text(f"Error: {e}")
+
+
 async def _approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, cs: ChatState) -> None:
     """Approve the current setup and publish to group."""
     try:
@@ -734,6 +814,29 @@ async def _approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, cs:
         st["setup"] = setup_data
         st["campaign"]["status"] = "active"
         st["campaign"]["name"] = setup_data.get("setting_type", "Campaña").capitalize()
+
+        # Sync themed NPCs from setup into campaign state["npcs"]
+        setup_npcs = setup_data.get("lore", {}).get("npcs", [])
+        if setup_npcs:
+            campaign_npcs = st.get("npcs", {})
+            for npc_data in setup_npcs:
+                npc_id = npc_data.get("name", "npc").lower().replace(" ", "_")
+                campaign_npcs[npc_id] = {
+                    "name": npc_data.get("name", npc_id),
+                    "role": npc_data.get("role", "NPC"),
+                    "status": "ALIVE",
+                    "location": setup_data.get("lore", {}).get("starting_location", "Unknown"),
+                    "disposition": "NEUTRAL",
+                    "mood": "neutral",
+                    "description": npc_data.get("dialogue", ""),
+                    "disposition_value": 0,
+                    "relationship_to_party": "stranger",
+                    "memory": [],
+                    "goals": "",
+                    "speaks_to_players": True,
+                }
+            st["npcs"] = campaign_npcs
+
         save_state(campaign_id, st)
 
         # Exit setup mode
@@ -747,7 +850,9 @@ async def _approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, cs:
         await _publish_setup_to_group(context, update.effective_chat.id, setup_data)
 
         await update.message.reply_text(
-            "✅ *Campaña publicada!* Los jugadores pueden usar /join.",
+            "✅ *Campaña publicada!* "
+            "Los jugadores usan /join para registrarse.\n"
+            "Cuando todos estén listos, el DM usa /start para iniciar la aventura.",
             parse_mode=ParseMode.MARKDOWN,
         )
     except Exception as e:
@@ -777,6 +882,24 @@ def _format_setup_preview(setup_data: dict) -> str:
     if classes:
         classes_str = " | ".join(f"_{c}_" for c in classes)
 
+    equipment = setup_data.get("starting_equipment", [])
+    equipment_str = ""
+    if equipment:
+        equipment_str = "\n".join(
+            f"• {eq.get('name','?')} — _{eq.get('description','')[:50]}_"
+            for eq in equipment
+        )
+
+    # Story arc preview
+    story_arc = setup_data.get("story_arc", {})
+    arc_str = ""
+    if story_arc:
+        pacing = story_arc.get("pacing_level", "medium")
+        milestones = story_arc.get("milestones", [])
+        arc_str = f"\n📜 *Arco narrativo* ({pacing}, {len(milestones)} hitos):\n"
+        for i, m in enumerate(milestones, 1):
+            arc_str += f"   {i}. {m.get('id', '?')}: {m.get('description', '')[:50]}...\n"
+
     return (
         f"🎭 *PREVIEW DE CAMPAÑA*\n"
         f"{'━'*20}\n\n"
@@ -790,7 +913,9 @@ def _format_setup_preview(setup_data: dict) -> str:
         f"*Setting:* {setup_data.get('setting_type','fantasy')}\n"
         f"🚨 *Amenaza:* {lore.get('main_threat','?')}\n"
         f"{'⚡ *Facciones:* ' + factions_str if factions_str else ''}\n"
-        f"{'👥 *NPCs:*'}{chr(10) + npcs_str if npcs_str else ''}"
+        f"{'👥 *NPCs:*'}{chr(10) + npcs_str if npcs_str else ''}{chr(10)}"
+        f"{'🎒 *Equipo inicial:*'}{chr(10) + equipment_str if equipment_str else ''}"
+        f"{arc_str}"
     )
 
 
@@ -811,6 +936,17 @@ async def _publish_setup_to_group(context: ContextTypes.DEFAULT_TYPE, group_chat
             for n in npcs
         )
 
+    classes = setup_data.get("classes")
+    classes_str = " | ".join(f"_{c}_" for c in classes) if classes else ""
+
+    equipment = setup_data.get("starting_equipment", [])
+    equipment_str = ""
+    if equipment:
+        equipment_str = "\n".join(
+            f"• {eq.get('name','?')} — _{eq.get('description','')[:40]}_"
+            for eq in equipment
+        )
+
     msg = (
         f"🎭 *Nueva Campaña: {setup_data.get('setting_type','Campaña').capitalize()}*\n"
         f"{'━'*20}\n\n"
@@ -819,10 +955,13 @@ async def _publish_setup_to_group(context: ContextTypes.DEFAULT_TYPE, group_chat
         f"📍 *Ubicación*\n{lore.get('starting_location','?')} — {lore.get('starting_location_desc','')}\n\n"
         f"{'⚡ *Facciones:* ' + factions_str + chr(10) if factions_str else ''}"
         f"{'👥 *NPCs:*'}{chr(10) + npcs_str if npcs_str else ''}{chr(10)}"
+        f"{'🎒 *Equipo inicial:*'}{chr(10) + equipment_str + chr(10) if equipment_str else ''}"
         f"{'━'*20}\n\n"
-        f"👥 *Personajes*\nRegistrá tu personaje con /join\n\n"
+        f"{'🎭 *Clases disponibles:* ' + classes_str + chr(10) + chr(10) if classes_str else ''}"
+        f"👥 *Personajes*\nRegistrá tu personaje con `/join <nombre> <clase>`\n\n"
         f"⚙️ *Config*\n🌐 Idioma: ES | 🗣️ Tono: {setup_data.get('tone','serious')} | "
-        f"⚔️ Setting: {setup_data.get('setting_type','fantasy')}"
+        f"⚔️ Setting: {setup_data.get('setting_type','fantasy')}\n\n"
+        f"_El DM usará /start para iniciar la aventura_"
     )
 
     await context.bot.send_message(
@@ -830,6 +969,102 @@ async def _publish_setup_to_group(context: ContextTypes.DEFAULT_TYPE, group_chat
         text=msg,
         parse_mode=ParseMode.MARKDOWN,
     )
+
+
+@with_audit("cmd_begin")
+async def cmd_begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inicia la aventura generando la escena inicial de narrativa."""
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+
+        if not cs.active_campaign:
+            await update.message.reply_text(
+                "⚠️ No hay campaña activa. Usá /setup para crear una."
+            )
+            return
+
+        from state.state_manager import load_state, save_state
+
+        state = load_state(cs.active_campaign)
+        if state is None:
+            await update.message.reply_text("⚠️ Campaña no encontrada.")
+            return
+
+        campaign_status = state.get("campaign", {}).get("status", "active")
+        if campaign_status == "setup":
+            await update.message.reply_text(
+                "⚠️ La campaña aún está en setup. Aprobalá con `perfecto` primero."
+            )
+            return
+
+        if state.get("adventure_started"):
+            await update.message.reply_text(
+                "🎭 La aventura ya comenzó. Usá /recap para recordar o /j para actuar."
+            )
+            return
+
+        characters = state.get("characters", {})
+        if not characters:
+            await update.message.reply_text(
+                "⚠️ No hay personajes registrados. Usá /join primero."
+            )
+            return
+
+        # Build context for opening scene
+        setup = state.get("setup", {})
+        lore = setup.get("lore", {})
+        ctx = {
+            "premise": setup.get("premise", ""),
+            "hook": setup.get("hook", ""),
+            "location": lore.get("starting_location", "Ubicación desconocida"),
+            "location_desc": lore.get("starting_location_desc", ""),
+            "characters": list(characters.keys()),
+            "tone": setup.get("tone", "serious"),
+            "setting_type": setup.get("setting_type", "fantasy"),
+        }
+
+        # Generate opening narrative
+        ng = NarrativeGenerator()
+        settings = get_settings(cs.active_campaign)
+        language = settings.language
+
+        result = ng.generate_scene(
+            state=state,
+            scene_type=SceneType.STORY_BEAT,
+            context=ctx,
+            language=language,
+        )
+
+        narrative = result.get("narrative", "La aventura comienza...")
+
+        # Mark adventure as started
+        state["adventure_started"] = True
+
+        # Transfer story_arc from setup to state if present
+        setup_arc = setup.get("story_arc")
+        if setup_arc and state.get("story_arc") is None:
+            state["story_arc"] = setup_arc
+
+        state.setdefault("scenes", []).append({
+            "type": "opening",
+            "narrative": narrative,
+            "timestamp": datetime.utcnow().isoformat(),
+            "characters_present": list(characters.keys()),
+        })
+        save_state(cs.active_campaign, state)
+
+        # Broadcast to group
+        msg = (
+            f"🎭 *¡La aventura comienza!*\n\n"
+            f"{narrative}\n\n"
+            f"_Usá /j para describir tu acción._"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        log.exception("cmd_begin error")
+        await update.message.reply_text(f"Error al iniciar aventura: {e}")
 
 
 @with_audit("cmd_join")
@@ -853,10 +1088,19 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         args = context.args
         if len(args) < 2:
+            # Show campaign-specific classes if available
+            class_help = "Classes: fighter, wizard, rogue, cleric, ranger, barbarian"
+            if cs.active_campaign:
+                from state.state_manager import load_state
+                st = load_state(cs.active_campaign)
+                if st:
+                    camp_classes = st.get("setup", {}).get("classes")
+                    if camp_classes:
+                        class_help = f"Clases para esta campaña: {', '.join(camp_classes)}"
             await update.message.reply_text(
                 "Usage: /join <name> <class> [level]\n"
-                "Example: /join Valdric fighter 3\n"
-                "Classes: fighter, wizard, rogue, cleric, ranger, barbarian"
+                f"Example: /join Valdric fighter 3\n"
+                f"{class_help}"
             )
             return
 
@@ -906,9 +1150,32 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         char = create_character(name, player_class, level, campaign_classes=campaign_classes)
+
+        # ── Starting equipment from campaign theme ──
+        if cs.active_campaign:
+            from state.state_manager import load_state
+            st = load_state(cs.active_campaign)
+            starting_equipment = st.get("setup", {}).get("starting_equipment", [])
+            if starting_equipment:
+                from bot.character_sheet import Item
+                for eq_data in starting_equipment:
+                    item = Item(
+                        name=eq_data.get("name", "Item misterioso"),
+                        quantity=eq_data.get("quantity", 1),
+                        description=eq_data.get("description", ""),
+                        is_consumable=eq_data.get("is_consumable", False),
+                        damage_dice=eq_data.get("damage_dice"),
+                        armor_class=eq_data.get("armor_class"),
+                        weight=eq_data.get("weight", 0.0),
+                        is_magic=eq_data.get("is_magic", False),
+                    )
+                    char.add_item(item)
+
+        char.telegram_id = update.effective_user.id  # type: ignore[attr-defined]
         chat_data = context.chat_data
         cs: ChatState = chat_data.get("_hermes_state", ChatState())
         cs.characters[name.lower()] = char
+        cs.telegram_characters[update.effective_user.id] = name.lower()
         chat_data["_hermes_state"] = cs
 
         # Persist to state.json so hermesdm-web can read it
@@ -2225,9 +2492,96 @@ async def cmd_campaign(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Error: {e}")
 
 
-# ------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# Start command — launch the adventure (opening scene)
+# -----------------------------------------------------------------------
+
+
+@with_audit("cmd_start")
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle /start — generate and broadcast the opening scene of the campaign.
+
+    Flow:
+    1. Verify active campaign with players who joined
+    2. Generate opening scene via NarrativeGenerator (EXPLORATION)
+    3. Send narrative to group
+    4. Record in history
+    """
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+
+        if not cs.active_campaign:
+            await update.message.reply_text(
+                "No hay campaña activa. Usa /setup para crear una.",
+            )
+            return
+
+        state = load_state(cs.active_campaign)
+        if state is None:
+            await update.message.reply_text("Campaña no encontrada.")
+            return
+
+        # Verify campaign is active
+        campaign_status = state.get("campaign", {}).get("status", "pending")
+        if campaign_status == "completed":
+            await update.message.reply_text(
+                "Esta campaña ya terminó. Usa /newgame para crear una nueva.",
+            )
+            return
+
+        # Check if players have joined
+        characters = state.get("characters", {})
+        if not characters:
+            await update.message.reply_text(
+                "Aún no hay jugadores en la party. Usa /join para registrar tu personaje.",
+            )
+            return
+
+        # Generate opening scene
+        ng = NarrativeGenerator()
+        settings = get_settings(cs.active_campaign)
+        language = settings.language
+
+        # Build location from campaign setup
+        location = state.get("campaign", {}).get("current_location") or "un lugar olvidado"
+
+        opening_result = ng.generate_scene(
+            state,
+            SceneType.EXPLORATION,
+            context={"location": location},
+            language=language,
+        )
+
+        opening_text = opening_result["narrative"]
+
+        # Record in history
+        append_history(
+            cs.active_campaign,
+            f"🎭 {opening_text}",
+            entry_type="opening",
+        )
+
+        # Broadcast to group
+        party_names = ", ".join(c.get("name", n) for n, c in characters.items())
+
+        await update.message.reply_text(
+            f"🎭 *¡LA AVENTURA COMIENZA!*\n\n"
+            f"_{opening_text}_\n\n"
+            f"👥 Party: {party_names}\n\n"
+            f"¿Qué hacen los aventureros?",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    except Exception as e:
+        log.exception("cmd_start error")
+        await update.message.reply_text(f"Error: {e}")
+
+
+# -----------------------------------------------------------------------
 # Save command handler (saving throw)
-# ------------------------------------------------------------------
+# -----------------------------------------------------------------------
 
 
 # cmd_save is imported from bot.save_command (inline saving throw resolution)
@@ -2431,14 +2785,12 @@ async def cmd_quit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @with_audit("cmd_end")
 async def cmd_end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle /end — closes the campaign with an epic narrative epilogue.
+    Handle /end — closes the campaign.
 
     Flow:
     1. Verify active campaign
-    2. Generate closure via NarrativeGenerator.generate_closure()
-    3. Send narrative to group
-    4. Mark campaign as completed
-    5. Queue closure image if triggered
+    2. Mark campaign as completed
+    3. Reset chat state
     """
     try:
         chat_data = context.chat_data
@@ -2464,64 +2816,57 @@ async def cmd_end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        # Generate closure narrative
-        ng = NarrativeGenerator()
-        settings = get_settings(cs.active_campaign)
-        language = settings.language
+        # Build a simple epilogue from campaign data
+        campaign_name = state.get("campaign", {}).get("name", "La aventura")
+        setup = state.get("setup", {})
+        tone = setup.get("tone", "")
+        premise = setup.get("premise", "")
 
-        closure_result = ng.generate_closure(state, language=language)
-
-        # Send epilogue to group
-        epilogue_text = closure_result["narrative"]
-        await update.message.reply_text(
-            f"🎭 *EPÍLOGO*\n\n{epilogue_text}",
-            parse_mode=ParseMode.MARKDOWN,
-        )
+        epilogue_lines = [
+            f"🎭 *EPÍLOGO — {campaign_name}*",
+            "",
+            f"Así concluye esta historia. {premise}" if premise else "Así concluye esta historia.",
+            "",
+            f"_Tone: {tone}_" if tone else "",
+            "",
+            "Los héroes parten hacia nuevos horizontes,",
+            "pero su legado perdurará en las leyendas...",
+        ]
+        epilogue_text = "\n".join(line for line in epilogue_lines if line)
 
         # Mark campaign as completed
         state["campaign"]["status"] = "completed"
         state["campaign"]["completed_at"] = datetime.utcnow().isoformat()
         state["campaign"]["epilogue"] = epilogue_text
 
-        # Update quest closures
-        if "quest_closure" in closure_result:
-            for quest_id, status in closure_result["quest_closure"].items():
-                if status == "completed":
-                    # Move from active to completed in quests
-                    active_quests = state.get("quests", {}).get("active", [])
-                    if quest_id in active_quests:
-                        active_quests.remove(quest_id)
-                        state["quests"]["completed"].append(quest_id)
+        # Move any remaining active quests to completed
+        active_quests = state.get("quests", {}).get("active", [])
+        if active_quests:
+            state.setdefault("quests", {}).setdefault("completed", [])
+            for quest_id in active_quests:
+                if quest_id not in state["quests"]["completed"]:
+                    state["quests"]["completed"].append(quest_id)
+            state["quests"]["active"] = []
 
         save_state(cs.active_campaign, state)
 
+        # Send epilogue to group
+        await update.message.reply_text(
+            epilogue_text,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
         # Reset chat state
+        chat_id = cs.active_campaign
         cs.active_campaign = None
         cs.combat_state = None
+        cs.characters = {}
+        cs.pending_attacks = {}
+        cs.pending_spell = None
+        cs.pending_skill_check = None
+        cs.pending_save = None
+        cs.pending_setup = None
         chat_data["_hermes_state"] = cs
-
-        # Queue closure image if triggered
-        if closure_result.get("triggered_image"):
-            try:
-                # Build image prompt and queue async generation
-                image_prompt = build_closure_image_prompt(state, closure_result)
-                # Use cmd_imagen logic to queue image generation
-                if settings.image_generation:
-                    job_queue = getattr(context.application, "job_queue", None)
-                    if job_queue is not None:
-                        job_queue.run_once(
-                            _closure_image_callback,
-                            5,  # 5 second delay
-                            name="closure_image",
-                            data={
-                                "campaign_id": cs.active_campaign
-                                or state["campaign"]["id"],
-                                "prompt": image_prompt,
-                                "chat_id": update.effective_chat.id,
-                            },
-                        )
-            except Exception as img_err:
-                log.warning(f"Could not queue closure image: {img_err}")
 
         await update.message.reply_text(
             "✅ *Campaña cerrada exitosamente.*\n\n"
@@ -3001,6 +3346,17 @@ def build_app() -> Application:
         CommandHandler("newgame", cmd_newgame, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
+        CommandHandler("setup", cmd_setup, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
+    )
+    # Setup approval / cancel commands (work as /perfecto, /arrancamos, /cancel_setup, /cancel)
+    app.add_handler(CommandHandler("perfecto", lambda u, c: _cmd_approve_setup(u, c)))
+    app.add_handler(CommandHandler("arrancamos", lambda u, c: _cmd_approve_setup(u, c)))
+    app.add_handler(CommandHandler("cancel_setup", lambda u, c: _cmd_cancel_setup(u, c)))
+    app.add_handler(CommandHandler("cancel", lambda u, c: _cmd_cancel_setup(u, c)))
+    app.add_handler(
+        CommandHandler("begin", cmd_begin, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
+    )
+    app.add_handler(
         CommandHandler("join", cmd_join, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
@@ -3061,6 +3417,9 @@ def build_app() -> Application:
     )
     app.add_handler(
         CommandHandler("campaign", cmd_campaign, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
+    )
+    app.add_handler(
+        CommandHandler("start", cmd_start, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
         CommandHandler("save", cmd_save, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
@@ -3124,8 +3483,16 @@ def build_app() -> Application:
         CommandHandler("countdown", cmd_countdown, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
 
-    # Plan B: /act prefix for async player actions (MUST be before echo_handler)
-    # Filter: SUPERGROUP only (already set at handler level)
+    # Plan B: /j and /act for async player actions
+    # CommandHandler for /j (takes precedence over MessageHandler)
+    app.add_handler(
+        CommandHandler(
+            "j",
+            cmd_j,
+            filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None,
+        )
+    )
+    # MessageHandler for /act  prefix (fallback for /act  text style)
     app.add_handler(
         MessageHandler(
             filters.TEXT & filters.ChatType.SUPERGROUP & filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else filters.TEXT & filters.ChatType.SUPERGROUP,
@@ -3139,46 +3506,94 @@ def build_app() -> Application:
     return app
 
 
+async def cmd_j(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle /j <action> — CommandHandler version of player action.
+    /j is the shorthand for /act, registered as a native Telegram command
+    so it works reliably in groups (CommandHandler intercepts / commands).
+    """
+    action_text = " ".join(context.args).strip() if context.args else ""
+    # Delegate to the shared action handler core
+    await _handle_player_action(update, context, action_text)
+
+
 async def _j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle /act <action> messages in groups — Plan B async player actions.
+    Also handles /j <action> as fallback (CommandHandler handles /j natively).
     Delegates to ActionRouter for clean parse → resolve → narrate flow.
     Optionally triggers image generation for dramatic scenes.
     """
     try:
         text = update.message.text or ""
-        if not text.startswith("/act "):
-            return  # Not a /act action, ignore
+        if text.startswith("/act "):
+            action_text = text[5:].strip()
+        elif text.startswith("/j "):
+            action_text = text[3:].strip()
+        else:
+            return  # Not a /act or /j action, ignore
 
-        action_text = text[5:].strip()
+        await _handle_player_action(update, context, action_text)
+    except Exception as e:
+        log.exception("_j_action_handler error")
+        try:
+            await update.message.reply_text(f"Error procesando acción: {e}")
+        except Exception:
+            pass
+
+
+async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action_text: str) -> None:
+    """
+    Core shared logic for processing a player action text.
+    Used by both cmd_j (CommandHandler) and _j_action_handler (MessageHandler).
+    """
+    try:
         if not action_text:
             await update.message.reply_text(
-                "⚠️ Uso: /act <tu acción>\nEjemplo: /act Ataco al dragón con mi espada"
+                "⚠️ Uso: /j <tu acción> o /act <tu acción>\nEjemplo: /j Ataco al dragón con mi espada"
             )
             return
 
-        chat_data = context.chat_data
+        chat_data = context.chat_data or {}
         cs: ChatState = chat_data.get("_hermes_state", ChatState())
 
         if not cs.active_campaign:
             await update.message.reply_text(
-                "⚠️ No hay campaña activa. Usa /newgame para empezar."
+                "⚠️ No hay campaña activa. Usa /setup para empezar."
             )
             return
 
-        # ── Find character ────────────────────────────────────────────────────
-        sender_name = update.effective_user.first_name or ""
-        char = cs.character_for(sender_name)
+        # ── Reload characters from state if chat_data was lost (bot restart) ───
+        if not cs.characters:
+            from bot.character_sheet import Character
+            st = load_state(cs.active_campaign)
+            if st:
+                for key, char_data in st.get("characters", {}).items():
+                    try:
+                        cs.characters[key] = Character.from_dict(char_data)
+                    except Exception:
+                        pass
+                # Rebuild telegram_characters mapping if possible
+                # (we can't know tg_id from state, so fallback name matching will be used)
 
-        # Try partial match if exact fails
+        # ── Find character ────────────────────────────────────────────────────
+        # Primary: look up by Telegram user ID (set on /join)
+        tg_id = update.effective_user.id
+        char = cs.character_for_tg_id(tg_id)
+
+        # Fallback: try by first_name if telegram_id lookup failed
         if char is None:
-            for key, c in cs.characters.items():
-                if (
-                    sender_name.lower() in c.name.lower()
-                    or c.name.lower() in sender_name.lower()
-                ):
-                    char = c
-                    break
+            sender_name = update.effective_user.first_name or ""
+            char = cs.character_for(sender_name)
+            # Try partial match if exact fails
+            if char is None:
+                for key, c in cs.characters.items():
+                    if (
+                        sender_name.lower() in c.name.lower()
+                        or c.name.lower() in sender_name.lower()
+                    ):
+                        char = c
+                        break
 
         if char is None:
             await update.message.reply_text(
@@ -3187,6 +3602,9 @@ async def _j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 f"Usa /join <nombre> <clase> para registrarte."
             )
             return
+
+        # Persist recovered characters back to chat_data
+        chat_data["_hermes_state"] = cs
 
         # ── Load game state ───────────────────────────────────────────────────
         state = load_state(cs.active_campaign) or {
@@ -3198,9 +3616,38 @@ async def _j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # ── Route action through ActionRouter ─────────────────────────────────
         from adapters.mode_b.action_router import ActionRouter
         from bot.dice_animation import animate_dice_roll
+        from dm.pacing_engine import create_pacing_engine
+
+        # Create pacing engine and decide scene type
+        pacing = create_pacing_engine(state)
+        scene_type = pacing.get_next_scene_type(action_text)
+        milestone_ctx = pacing.get_milestone_context()
 
         router = ActionRouter(state=state, character=char)
-        result = router.route(update, action_text)
+        result = router.route(update, action_text, scene_type_override=scene_type, milestone_context=milestone_ctx)
+
+        # ── Check milestone advancement ────────────────────────────────────────
+        try:
+            if pacing.check_milestone_advance(result.narrative):
+                from datetime import datetime as _dt
+                pacing.arc.advance_milestone(timestamp=_dt.utcnow().isoformat())
+                # If we just advanced, get new milestone info
+                new_ctx = pacing.get_milestone_context()
+                if not new_ctx.get("campaign_complete"):
+                    result.narrative += (
+                        f"\n\n🎯 *Avance de trama:* Pasás a '{new_ctx['current_milestone_id']}' — "
+                        f"{new_ctx['current_milestone_description'][:60]}..."
+                    )
+        except Exception:
+            log.exception("Pacing milestone check failed")
+
+        # Record this scene in the arc
+        pacing.record_scene(scene_type)
+
+        # Save updated story_arc back to state
+        state["story_arc"] = pacing.arc.to_dict()
+        from state.state_manager import save_state
+        save_state(cs.active_campaign, state)
 
         # ── Send initial message to get message_id ───────────────────────────
         initial_text = (
@@ -3434,12 +3881,15 @@ async def _echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         cs: ChatState = context.chat_data.get("_hermes_state", ChatState())
 
+        # Setup mode: delegate to setup text handler (describing or preview)
+        if getattr(cs, "setup_mode", False) and getattr(cs, "setup_state", "") in ("describing", "preview"):
+            await _handle_setup_text(update, context)
+            return
+
         # Active campaign: demand a /act action first
         if cs.active_campaign:
             await update.message.reply_text(
-                "🎲 Usá /act antes de tu acción.\n"
-                "Ejemplo: /act ataco al dragón\n"
-                "Para acciones sin dado: /me <acción>"
+                "🎲 Usá /j <tu acción> o /act <tu acción>. Ejemplo: /j ataco al dragón\nPara acciones sin dado: /me <acción>"
             )
             return
 
@@ -3451,10 +3901,6 @@ async def _echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         log.exception("_echo_handler error")
 
 
-if __name__ == "__main__":
-    main()
-
-
 def main() -> None:
     """Entry point for the hermesdm CLI command (pip install -e .)."""
     logging.basicConfig(
@@ -3463,4 +3909,8 @@ def main() -> None:
     )
     app = build_app()
     log.info("HermesDM bot starting...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()

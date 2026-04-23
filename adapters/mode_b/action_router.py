@@ -88,7 +88,7 @@ class ActionResult:
 # NarrativeGenerator wrapper (para _narrate)
 # ------------------------------------------------------------------#
 
-def _generate_narrative(scene_type: SceneType, context: dict) -> str:
+def _generate_narrative(scene_type: SceneType, context: dict, milestone_context: dict | None = None) -> str:
     """
     Genera narración via NarrativeGenerator (template o LLM).
     Si no hay LLM client, usa template mode automáticamente.
@@ -109,6 +109,7 @@ def _generate_narrative(scene_type: SceneType, context: dict) -> str:
             scene_type=scene_type,
             context=context,
             language=Language.ES,
+            milestone_context=milestone_context,
         )
         return result.get("narrative", "La escena continúa...")
     except Exception:
@@ -161,13 +162,15 @@ class ActionRouter:
         self.state = state or {}
         self.char = character
 
-    def route(self, update: Update, action_text: str) -> ActionResult:
+    def route(self, update: Update, action_text: str, scene_type_override: SceneType | None = None, milestone_context: dict | None = None) -> ActionResult:
         """
         Flujo principal: parse → resolve → classify → narrate.
 
         Args:
             update: Telegram Update (para extraer user info si se necesita)
             action_text: texto de la acción sin el prefijo "/j "
+            scene_type_override: Optional SceneType from PacingEngine
+            milestone_context: Optional dict from PacingEngine with milestone info
 
         Returns:
             ActionResult con narration, mechanic_inline, y image_url
@@ -181,9 +184,9 @@ class ActionRouter:
                 intent = ai_intent
 
         resolution = self._resolve(intent)
-        scene_type = self._classify(intent, resolution)
+        scene_type = scene_type_override or self._classify(intent, resolution)
         ctx = self._build_context(intent, resolution, scene_type)
-        narrative = _generate_narrative(scene_type, ctx)
+        narrative = _generate_narrative(scene_type, ctx, milestone_context)
 
         return ActionResult(
             narrative=narrative,

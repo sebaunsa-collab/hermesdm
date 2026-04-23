@@ -247,6 +247,12 @@ def main():
                         help="Telegram group ID for D&D sessions (e.g. -1003916745496)")
     parser.add_argument("--hermesdm-path", type=str, default=None,
                         help="Path to hermesdm repo (default: auto-detect)")
+    parser.add_argument("--with-web", action="store_true",
+                        help="Also install and configure the web companion dashboard")
+    parser.add_argument("--web-port", type=int, default=8080,
+                        help="Port for the web companion (default: 8080)")
+    parser.add_argument("--state-dir", type=str, default=None,
+                        help="Path to HermesDM campaign state directory (default: ~/.hermes/hermesdm/campaigns)")
     parser.add_argument("--uninstall", action="store_true",
                         help="Revert all patches and remove hermesdm from Hermes Agent")
     parser.add_argument("--verify", action="store_true",
@@ -316,11 +322,31 @@ def main():
             print(f"  {status}  {name}")
             if not ok:
                 all_ok = False
+        # Verify web companion if installed
+        web_env = hermesdm_path / "web" / ".env"
+        if web_env.exists() or args.with_web:
+            print("\n=== Web Companion Status ===")
+            sys.path.insert(0, str(hermesdm_path / "scripts"))
+            try:
+                import setup_web
+                web_ok = setup_web.verify_web(hermesdm_path)
+                if not web_ok:
+                    all_ok = False
+            except Exception as e:
+                print(f"  [ERR] Could not verify web: {e}")
+                all_ok = False
         sys.exit(0 if all_ok else 1)
 
     # ── Uninstall mode ─────────────────────────────────────────────────
     if args.uninstall:
         print("\n=== Uninstalling HermesDM patches ===")
+        # Uninstall web companion first
+        sys.path.insert(0, str(hermesdm_path / "scripts"))
+        try:
+            import setup_web
+            setup_web.uninstall_web(hermesdm_path, dry_run=args.dry_run)
+        except Exception as e:
+            print(f"  [WARN] Could not uninstall web: {e}")
         # We need to find the original text, not the patched text
         # This is tricky because we don't store the original
         # Best we can do: check backup files exist
@@ -402,6 +428,23 @@ def main():
         else:
             print(f"\n[CFG] .env already has HERMESDM_GROUP_ID — skipping")
 
+    # ── Web companion setup ────────────────────────────────────────────
+    if args.with_web:
+        sys.path.insert(0, str(hermesdm_path / "scripts"))
+        try:
+            import setup_web
+            state_dir = args.state_dir or None
+            web_ok = setup_web.setup_web(
+                hermesdm_path,
+                state_dir=state_dir,
+                port=args.web_port,
+                dry_run=args.dry_run,
+            )
+            if not web_ok and not args.dry_run:
+                print("\n  [WARN] Web companion setup had issues, but bot installation is complete.")
+        except Exception as e:
+            print(f"\n  [ERR] Web companion setup failed: {e}")
+
     # ── Summary ────────────────────────────────────────────────────────
     print("\n=== Result ===")
     if args.dry_run:
@@ -415,9 +458,17 @@ def main():
         print(f"       HERMESDM_PATH={hermesdm_path}")
         print("  2. Run: dm gateway start")
         print("  3. Test: send /j to your D&D group")
+        if args.with_web:
+            print("\n  Web companion:")
+            print("  4. Run: hermesdm-web")
+            print("  5. Open: http://localhost:8080")
     else:
         print("Nothing to do — all patches already applied.")
         print("Run with --verify to check status.")
+        if args.with_web:
+            print("\n  Web companion:")
+            print("  Run: hermesdm-web")
+            print("  Or:  cd web && docker compose up -d")
 
 
 if __name__ == "__main__":

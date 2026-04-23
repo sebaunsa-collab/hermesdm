@@ -39,3 +39,9 @@ Thumbs.db
 state/campaigns/*.json
 state/active_campaign.json
 *.log
+
+# Web companion
+web/__pycache__/
+web/.env
+web/.env.local
+state/audit_*.jsonl

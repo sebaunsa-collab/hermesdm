@@ -229,22 +229,46 @@
 
 ```bash
 # 1. Clonar e instalar
-git clone https://github.com/sebaunsa-collab/hermesdm.git
-cd hermesdm
-pip install -e .
+$ git clone https://github.com/sebaunsa-collab/hermesdm.git
+$ cd hermesdm
+$ pip install -e .
 
 # 2. Configurar tokens
-cp .env.example .env
+$ cp .env.example .env
 # ✏️  Editar .env y poner:
-#   TELEGRAM_BOT_TOKEN=tu_token_de_botfather
+#   TELEGRAM_BOT_TOKEN=tu_tok...ther
 #   MINIMAX_API_KEY=***  (opcional, usa Pollinations si no está)
 
 # 3. Correr
-hermesdm
+$ hermesdm
 # O directamente: python -m bot.telegram_handler
 
 # 4. Abrí Telegram → buscá tu bot → /start
 ```
+
+### 🌐 Web Companion (opcional)
+
+Dashboard visual para ver la partida en el navegador. Se instala con un flag:
+
+```bash
+# Instalar bot + web companion
+$ python3 scripts/install.py --group-id -1003916745496 --with-web
+
+# Levantar bot
+$ dm gateway start
+
+# Levantar web (en otra terminal)
+$ hermesdm-web
+# → http://localhost:8080
+```
+
+O con Docker:
+
+```bash
+$ cd web && docker compose up -d
+```
+
+El web companion es **read-only** — muestra personajes, historial, quests e imágenes en tiempo real. No reemplaza Telegram, lo complementa.
 
 ### ⚙️ Requisitos
 
@@ -459,6 +483,12 @@ hermesdm/
 │
 ├── state/                        # 💾 Persistencia
 │   └── state_manager.py         # Lee/escribe JSON, validate_state()
+│
+├── web/                          # 🌐 Dashboard visual (opcional)
+│   ├── server.py                # FastAPI — lee state.json, expone API + SSE
+│   ├── static/index.html        # UI vanilla JS — dark fantasy theme
+│   ├── docker-compose.yml       # Docker one-liner
+│   └── requirements.txt         # fastapi, uvicorn, sse-starlette
 │
 ├── config.yaml                   # ⚙️ Configuración del bot
 ├── .env.example                  # 🔑 Template de variables de entorno

@@ -1,5 +1,6 @@
-## 🎲 HermesDM — Tu Dungeon Master con IA en Telegram
-
+# 🎲 HermesDM — Tu Dungeon Master con IA en Telegram
+<p align="center">
+   
 <p align="center">
 <img width="1248" height="756" alt="hermes DM" src="https://github.com/user-attachments/assets/f0c94921-81df-4b68-95cf-a4e28e6fce13" />
 

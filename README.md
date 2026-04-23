@@ -558,9 +558,9 @@ python -c "import yaml; yaml.safe_load(open('config.yaml'))"
 <p align="center">
 <strong>Sherman</strong> — [@TheShugarBoy](https://twitter.com/TheShugarBoy) 🐦
 <br/>
-Desarrollado con Python 🐍, Telegram Bots API, y MiniMax LLM.
+Desarrollado con Python 🐍, Telegram Bots API, y Kimi k2.6.
 </p>
-
+<p align="center">
 ¿Encontraste un bug? 🐛 Abrí un [issue](https://github.com/sebaunsa-collab/hermesdm/issues) o mandame un DM en [Twitter](https://twitter.com/TheShugarBoy).
 
 ---

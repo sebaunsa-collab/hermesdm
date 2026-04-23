@@ -1,4 +1,4 @@
-# 🎲 HermesDM — Tu Dungeon Master con IA en Telegram
+#  HermesDM — Tu Dungeon Master con IA en Telegram
 
    
 <p align="center">
@@ -19,7 +19,7 @@
 
 ---
 
-## ⚡ TL;DR — Así se ve una partida real
+##  TL;DR — Así se ve una partida real
 
 ```
 🧙 Sherman → /create Valdric Wizard
@@ -39,7 +39,7 @@
 
 ---
 
-## 🤔 Por qué HermesDM?
+##  Por qué HermesDM?
 
 | | Roll20 | D&D Beyond | **HermesDM** |
 |---|:---:|:---:|:---:|

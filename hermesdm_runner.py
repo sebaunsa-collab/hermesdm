@@ -11,15 +11,14 @@ Uso:
 
 El runner espera comandos del padre via stdin o señales.
 Para uso standalone, corre directamente:
-    python3 -m bot.telegram_handler
+    hermesdm
+    # o: python -m bot.telegram_handler
 """
 import logging
 import os
 import signal
 import sys
 
-# Asegurar que usa el venv de hermes-agent (tiene python-telegram-bot)
-VENV_PYTHON = "/home/hermes/hermes-agent/venv/bin/python3"
 BOT_MODULE = "bot.telegram_handler"
 
 log = logging.getLogger("hermesdm.runner")
@@ -27,12 +26,9 @@ log = logging.getLogger("hermesdm.runner")
 
 def run_bot():
     """Ejecuta el bot como subprocess."""
-    # Cambiar al directorio del proyecto
-    os.chdir("/home/hermes/hermesdm")
-    sys.path.insert(0, "/home/hermes/hermesdm")
-
+    # Usar sys.executable para obtener el python del venv activo
     log.info("Starting HermesDM bot...")
-    os.execv(VENV_PYTHON, [VENV_PYTHON, "-m", BOT_MODULE])
+    os.execv(sys.executable, [sys.executable, "-m", BOT_MODULE])
 
 
 def signal_handler(signum, frame):

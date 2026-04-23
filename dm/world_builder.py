@@ -277,24 +277,95 @@ No escribas nada más que el JSON."""
         }
 
     except Exception as e:
-        # Fallback: use template-based world builder
+        # Fallback: use template-based world builder, customized with description
         import warnings
+        import re
         warnings.warn(f"AI setup generation failed ({e}), falling back to templates")
 
+        # Parse key elements from the user's description
+        desc_lower = description.lower()
+        threat = ""
+        location = ""
+
+        # Extract threat/antagonist hints from description
+        threat_patterns = [
+            r"rey demonio",
+            r"rey humano",
+            r"dragón",
+            r"demon[io]",
+            r"villano",
+            r"corrupto",
+            r"tirano",
+            r"malvado",
+            r"amenaza",
+            r"dr.?king",
+            r"demon.?king",
+        ]
+        for pat in threat_patterns:
+            m = re.search(pat, desc_lower)
+            if m:
+                threat = m.group(0).capitalize()
+                break
+
+        # Detect setting type from description
+        if any(w in desc_lower for w in ["ciudad", "puerto", "reino", "palacio", "castillo"]):
+            location = "Ciudad amurallada"
+        elif any(w in desc_lower for w in ["bosque", "selva", "montaña", "cueva", "mazmorra"]):
+            location = "Tierras salvajes"
+        else:
+            location = "Un lugar olvidado"
+
+        # Detect tone
+        detected_tone = tone
+        if any(w in desc_lower for w in ["serio", "político", "oscuro", "dark"]):
+            detected_tone = "dark"
+        elif any(w in desc_lower for w in ["épico", "heroico", "épico"]):
+            detected_tone = "epic"
+
+        # Build customized premise from description
+        premise = f"Los personajes son aventureros comprometidos con una misión peligrosa: {description.strip('.')}. Un conflicto de poder y traición los enfrentará a enemigos inesperados."
+
+        # Extract player roles from description if mentioned
+        roles = []
+        role_patterns = ["mesa redonda", "caballeros", "mercenarios", "espías", "aventu", "héroe"]
+        for pat in role_patterns:
+            if pat in desc_lower:
+                roles.append(pat)
+        role_str = ", ".join(roles) if roles else "aventuross"
+
+        hook = (
+            f"La amenaza se cierne sobre {location.lower()}. "
+            f"Una alianza oculta entre {threat or 'fuerzas oscuras'} y figuras de poder amenaza con destruir todo. "
+            f"Los {role_str} deben actuar antes de que sea tarde."
+        )
+
         fallback = build_world(setting)
+        factions = fallback["world"].get("factions", {})
+
         return {
             "description": description,
-            "premise": f"Los personajes son aventureros en {fallback['campaign']['name']}.",
-            "hook": fallback["world"].get("main_threat", "Una amenaza se cierne sobre el mundo."),
-            "tone": tone,
+            "premise": premise,
+            "hook": hook,
+            "tone": detected_tone,
             "setting_type": setting,
             "approved": False,
             "lore": {
-                "factions": fallback["world"].get("factions", {}),
-                "main_threat": fallback["world"].get("main_threat", ""),
-                "starting_location": fallback["campaign"].get("current_location", ""),
-                "starting_location_desc": fallback["world"].get("description", "")[:200],
-                "npcs": [],
+                "factions": factions,
+                "main_threat": threat or fallback["world"].get("main_threat", "Una amenaza se cierne sobre el mundo."),
+                "starting_location": location,
+                "starting_location_desc": f"{location} — {description[:100].strip()}. Un lugar donde el conflicto entre {threat or 'fuerzas oscuras'} y la justicia está a punto de estallar.",
+                "npcs": [
+                    {
+                        "name": "Lady Elara",
+                        "role": "Noble神秘",
+                        "dialogue": "El poder corrompe... pero la desesperación corrompe más.",
+                    },
+                    {
+                        "name": "Capitán Vorn",
+                        "role": "Comandante corrupto",
+                        "dialogue": "Órdenes son órdenes. Preguntame después.",
+                    },
+                ],
             },
         }
 

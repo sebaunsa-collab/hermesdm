@@ -66,8 +66,9 @@ from bot.turn_manager import (
     start_combat,
 )
 from dm.image_prompt_builder import build_closure_image_prompt
-from dm.narrative_generator import NarrativeGenerator
+from dm.narrative_generator import Language, NarrativeGenerator, SceneType
 from state.state_manager import (
+    append_history,
     campaign_exists,
     get_settings,
     list_campaigns,
@@ -168,7 +169,13 @@ class ChatState:
 
     characters: dict[str, Character] = field(default_factory=dict)
     """
-    Characters registered in this chat (player_name -> Character).
+    Characters registered in this chat (character_name_lower -> Character).
+    """
+
+    telegram_characters: dict[int, str] = field(default_factory=dict)
+    """
+    Reverse mapping: telegram_user_id -> character_name_lower.
+    Populated on /join so /j can find the right character reliably.
     """
 
     combat_state: CombatState | None = None
@@ -211,6 +218,13 @@ class ChatState:
 
     def character_for(self, player_name: str) -> Character | None:
         return self.characters.get(player_name.lower())
+
+    def character_for_tg_id(self, tg_id: int) -> Character | None:
+        """Find character by Telegram user ID (primary lookup for /j)."""
+        char_key = self.telegram_characters.get(tg_id)
+        if char_key:
+            return self.characters.get(char_key)
+        return None
 
     def active_character_names(self) -> list[str]:
         return list(self.characters.keys())
@@ -716,6 +730,38 @@ async def _handle_setup_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
 
+async def _cmd_approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """CommandHandler wrapper for /perfecto and /arrancamos."""
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+        if not cs.setup_mode:
+            await update.message.reply_text("No hay un setup activo. Usá /setup para empezar.")
+            return
+        await _approve_setup(update, context, cs)
+    except Exception as e:
+        log.exception("_cmd_approve_setup error")
+        await update.message.reply_text(f"Error: {e}")
+
+
+async def _cmd_cancel_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """CommandHandler wrapper for /cancel_setup."""
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+        if not cs.setup_mode:
+            await update.message.reply_text("No hay un setup activo para cancelar.")
+            return
+        cs.setup_mode = False
+        cs.setup_state = "idle"
+        cs.pending_setup = None
+        chat_data["_hermes_state"] = cs
+        await update.message.reply_text("❌ Setup cancelado.")
+    except Exception as e:
+        log.exception("_cmd_cancel_setup error")
+        await update.message.reply_text(f"Error: {e}")
+
+
 async def _approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, cs: ChatState) -> None:
     """Approve the current setup and publish to group."""
     try:
@@ -747,7 +793,9 @@ async def _approve_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, cs:
         await _publish_setup_to_group(context, update.effective_chat.id, setup_data)
 
         await update.message.reply_text(
-            "✅ *Campaña publicada!* Los jugadores pueden usar /join.",
+            "✅ *Campaña publicada!* "
+            "Los jugadores usan /join para registrarse.\n"
+            "Cuando todos estén listos, el DM usa /start para iniciar la aventura.",
             parse_mode=ParseMode.MARKDOWN,
         )
     except Exception as e:
@@ -822,7 +870,8 @@ async def _publish_setup_to_group(context: ContextTypes.DEFAULT_TYPE, group_chat
         f"{'━'*20}\n\n"
         f"👥 *Personajes*\nRegistrá tu personaje con /join\n\n"
         f"⚙️ *Config*\n🌐 Idioma: ES | 🗣️ Tono: {setup_data.get('tone','serious')} | "
-        f"⚔️ Setting: {setup_data.get('setting_type','fantasy')}"
+        f"⚔️ Setting: {setup_data.get('setting_type','fantasy')}\n\n"
+        f"_El DM usará /start para iniciar la aventura_"
     )
 
     await context.bot.send_message(
@@ -830,6 +879,96 @@ async def _publish_setup_to_group(context: ContextTypes.DEFAULT_TYPE, group_chat
         text=msg,
         parse_mode=ParseMode.MARKDOWN,
     )
+
+
+@with_audit("cmd_begin")
+async def cmd_begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inicia la aventura generando la escena inicial de narrativa."""
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+
+        if not cs.active_campaign:
+            await update.message.reply_text(
+                "⚠️ No hay campaña activa. Usá /setup para crear una."
+            )
+            return
+
+        from state.state_manager import load_state, save_state
+
+        state = load_state(cs.active_campaign)
+        if state is None:
+            await update.message.reply_text("⚠️ Campaña no encontrada.")
+            return
+
+        campaign_status = state.get("campaign", {}).get("status", "active")
+        if campaign_status == "setup":
+            await update.message.reply_text(
+                "⚠️ La campaña aún está en setup. Aprobalá con `perfecto` primero."
+            )
+            return
+
+        if state.get("adventure_started"):
+            await update.message.reply_text(
+                "🎭 La aventura ya comenzó. Usá /recap para recordar o /j para actuar."
+            )
+            return
+
+        characters = state.get("characters", {})
+        if not characters:
+            await update.message.reply_text(
+                "⚠️ No hay personajes registrados. Usá /join primero."
+            )
+            return
+
+        # Build context for opening scene
+        setup = state.get("setup", {})
+        lore = setup.get("lore", {})
+        ctx = {
+            "premise": setup.get("premise", ""),
+            "hook": setup.get("hook", ""),
+            "location": lore.get("starting_location", "Ubicación desconocida"),
+            "location_desc": lore.get("starting_location_desc", ""),
+            "characters": list(characters.keys()),
+            "tone": setup.get("tone", "serious"),
+            "setting_type": setup.get("setting_type", "fantasy"),
+        }
+
+        # Generate opening narrative
+        ng = NarrativeGenerator()
+        settings = get_settings(cs.active_campaign)
+        language = settings.language
+
+        result = ng.generate_scene(
+            state=state,
+            scene_type=SceneType.STORY_BEAT,
+            context=ctx,
+            language=language,
+        )
+
+        narrative = result.get("narrative", "La aventura comienza...")
+
+        # Mark adventure as started
+        state["adventure_started"] = True
+        state.setdefault("scenes", []).append({
+            "type": "opening",
+            "narrative": narrative,
+            "timestamp": datetime.utcnow().isoformat(),
+            "characters_present": list(characters.keys()),
+        })
+        save_state(cs.active_campaign, state)
+
+        # Broadcast to group
+        msg = (
+            f"🎭 *¡La aventura comienza!*\n\n"
+            f"{narrative}\n\n"
+            f"_Usá /j para describir tu acción._"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        log.exception("cmd_begin error")
+        await update.message.reply_text(f"Error al iniciar aventura: {e}")
 
 
 @with_audit("cmd_join")
@@ -906,9 +1045,11 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         char = create_character(name, player_class, level, campaign_classes=campaign_classes)
+        char.telegram_id = update.effective_user.id  # type: ignore[attr-defined]
         chat_data = context.chat_data
         cs: ChatState = chat_data.get("_hermes_state", ChatState())
         cs.characters[name.lower()] = char
+        cs.telegram_characters[update.effective_user.id] = name.lower()
         chat_data["_hermes_state"] = cs
 
         # Persist to state.json so hermesdm-web can read it
@@ -2225,9 +2366,96 @@ async def cmd_campaign(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Error: {e}")
 
 
-# ------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# Start command — launch the adventure (opening scene)
+# -----------------------------------------------------------------------
+
+
+@with_audit("cmd_start")
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle /start — generate and broadcast the opening scene of the campaign.
+
+    Flow:
+    1. Verify active campaign with players who joined
+    2. Generate opening scene via NarrativeGenerator (EXPLORATION)
+    3. Send narrative to group
+    4. Record in history
+    """
+    try:
+        chat_data = context.chat_data
+        cs: ChatState = chat_data.get("_hermes_state", ChatState())
+
+        if not cs.active_campaign:
+            await update.message.reply_text(
+                "No hay campaña activa. Usa /setup para crear una.",
+            )
+            return
+
+        state = load_state(cs.active_campaign)
+        if state is None:
+            await update.message.reply_text("Campaña no encontrada.")
+            return
+
+        # Verify campaign is active
+        campaign_status = state.get("campaign", {}).get("status", "pending")
+        if campaign_status == "completed":
+            await update.message.reply_text(
+                "Esta campaña ya terminó. Usa /newgame para crear una nueva.",
+            )
+            return
+
+        # Check if players have joined
+        characters = state.get("characters", {})
+        if not characters:
+            await update.message.reply_text(
+                "Aún no hay jugadores en la party. Usa /join para registrar tu personaje.",
+            )
+            return
+
+        # Generate opening scene
+        ng = NarrativeGenerator()
+        settings = get_settings(cs.active_campaign)
+        language = settings.language
+
+        # Build location from campaign setup
+        location = state.get("campaign", {}).get("current_location") or "Un lugar olvidado"
+
+        opening_result = ng.generate_scene(
+            state,
+            SceneType.EXPLORATION,
+            context={"location": location},
+            language=language,
+        )
+
+        opening_text = opening_result["narrative"]
+
+        # Record in history
+        append_history(
+            cs.active_campaign,
+            f"🎭 {opening_text}",
+            entry_type="opening",
+        )
+
+        # Broadcast to group
+        party_names = ", ".join(c.get("name", n) for n, c in characters.items())
+
+        await update.message.reply_text(
+            f"🎭 *¡LA AVENTURA COMIENZA!*\n\n"
+            f"_{opening_text}_\n\n"
+            f"👥 Party: {party_names}\n\n"
+            f"¿Qué hacen los aventureros?",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    except Exception as e:
+        log.exception("cmd_start error")
+        await update.message.reply_text(f"Error: {e}")
+
+
+# -----------------------------------------------------------------------
 # Save command handler (saving throw)
-# ------------------------------------------------------------------
+# -----------------------------------------------------------------------
 
 
 # cmd_save is imported from bot.save_command (inline saving throw resolution)
@@ -3001,6 +3229,17 @@ def build_app() -> Application:
         CommandHandler("newgame", cmd_newgame, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
+        CommandHandler("setup", cmd_setup, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
+    )
+    # Setup approval / cancel commands (work as /perfecto, /arrancamos, /cancel_setup, /cancel)
+    app.add_handler(CommandHandler("perfecto", lambda u, c: _cmd_approve_setup(u, c)))
+    app.add_handler(CommandHandler("arrancamos", lambda u, c: _cmd_approve_setup(u, c)))
+    app.add_handler(CommandHandler("cancel_setup", lambda u, c: _cmd_cancel_setup(u, c)))
+    app.add_handler(CommandHandler("cancel", lambda u, c: _cmd_cancel_setup(u, c)))
+    app.add_handler(
+        CommandHandler("begin", cmd_begin, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
+    )
+    app.add_handler(
         CommandHandler("join", cmd_join, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
@@ -3061,6 +3300,9 @@ def build_app() -> Application:
     )
     app.add_handler(
         CommandHandler("campaign", cmd_campaign, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
+    )
+    app.add_handler(
+        CommandHandler("start", cmd_start, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
     app.add_handler(
         CommandHandler("save", cmd_save, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
@@ -3124,8 +3366,16 @@ def build_app() -> Application:
         CommandHandler("countdown", cmd_countdown, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
 
-    # Plan B: /act prefix for async player actions (MUST be before echo_handler)
-    # Filter: SUPERGROUP only (already set at handler level)
+    # Plan B: /j and /act for async player actions
+    # CommandHandler for /j (takes precedence over MessageHandler)
+    app.add_handler(
+        CommandHandler(
+            "j",
+            cmd_j,
+            filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None,
+        )
+    )
+    # MessageHandler for /act  prefix (fallback for /act  text style)
     app.add_handler(
         MessageHandler(
             filters.TEXT & filters.ChatType.SUPERGROUP & filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else filters.TEXT & filters.ChatType.SUPERGROUP,
@@ -3139,21 +3389,51 @@ def build_app() -> Application:
     return app
 
 
+async def cmd_j(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle /j <action> — CommandHandler version of player action.
+    /j is the shorthand for /act, registered as a native Telegram command
+    so it works reliably in groups (CommandHandler intercepts / commands).
+    """
+    action_text = " ".join(context.args).strip() if context.args else ""
+    # Delegate to the shared action handler core
+    await _handle_player_action(update, context, action_text)
+
+
 async def _j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle /act <action> messages in groups — Plan B async player actions.
+    Also handles /j <action> as fallback (CommandHandler handles /j natively).
     Delegates to ActionRouter for clean parse → resolve → narrate flow.
     Optionally triggers image generation for dramatic scenes.
     """
     try:
         text = update.message.text or ""
-        if not text.startswith("/act "):
-            return  # Not a /act action, ignore
+        if text.startswith("/act "):
+            action_text = text[5:].strip()
+        elif text.startswith("/j "):
+            action_text = text[3:].strip()
+        else:
+            return  # Not a /act or /j action, ignore
 
-        action_text = text[5:].strip()
+        await _handle_player_action(update, context, action_text)
+    except Exception as e:
+        log.exception("_j_action_handler error")
+        try:
+            await update.message.reply_text(f"Error procesando acción: {e}")
+        except Exception:
+            pass
+
+
+async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action_text: str) -> None:
+    """
+    Core shared logic for processing a player action text.
+    Used by both cmd_j (CommandHandler) and _j_action_handler (MessageHandler).
+    """
+    try:
         if not action_text:
             await update.message.reply_text(
-                "⚠️ Uso: /act <tu acción>\nEjemplo: /act Ataco al dragón con mi espada"
+                "⚠️ Uso: /j <tu acción> o /act <tu acción>\nEjemplo: /j Ataco al dragón con mi espada"
             )
             return
 
@@ -3167,18 +3447,23 @@ async def _j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
 
         # ── Find character ────────────────────────────────────────────────────
-        sender_name = update.effective_user.first_name or ""
-        char = cs.character_for(sender_name)
+        # Primary: look up by Telegram user ID (set on /join)
+        tg_id = update.effective_user.id
+        char = cs.character_for_tg_id(tg_id)
 
-        # Try partial match if exact fails
+        # Fallback: try by first_name if telegram_id lookup failed
         if char is None:
-            for key, c in cs.characters.items():
-                if (
-                    sender_name.lower() in c.name.lower()
-                    or c.name.lower() in sender_name.lower()
-                ):
-                    char = c
-                    break
+            sender_name = update.effective_user.first_name or ""
+            char = cs.character_for(sender_name)
+            # Try partial match if exact fails
+            if char is None:
+                for key, c in cs.characters.items():
+                    if (
+                        sender_name.lower() in c.name.lower()
+                        or c.name.lower() in sender_name.lower()
+                    ):
+                        char = c
+                        break
 
         if char is None:
             await update.message.reply_text(
@@ -3437,9 +3722,7 @@ async def _echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Active campaign: demand a /act action first
         if cs.active_campaign:
             await update.message.reply_text(
-                "🎲 Usá /act antes de tu acción.\n"
-                "Ejemplo: /act ataco al dragón\n"
-                "Para acciones sin dado: /me <acción>"
+                "🎲 Usá /j <tu acción> o /act <tu acción>. Ejemplo: /j ataco al dragón\nPara acciones sin dado: /me <acción>"
             )
             return
 
@@ -3451,10 +3734,6 @@ async def _echo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         log.exception("_echo_handler error")
 
 
-if __name__ == "__main__":
-    main()
-
-
 def main() -> None:
     """Entry point for the hermesdm CLI command (pip install -e .)."""
     logging.basicConfig(
@@ -3463,4 +3742,8 @@ def main() -> None:
     )
     app = build_app()
     log.info("HermesDM bot starting...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()

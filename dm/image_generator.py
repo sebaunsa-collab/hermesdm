@@ -2,7 +2,7 @@
 dm/image_generator.py — Generador de imágenes de escena para HermesDM.
 
 Usa Pollinations.ai (gratis, rápido, sin API key) para generar imágenes de escenas D&D.
-El endpoint público es https://gen.pollinations.ai/image/{prompt}
+El endpoint público es https://image.pollinations.ai/
 
 Uso:
     from dm.image_generator import generate_scene_image
@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
-# Ruta base para imágenes cacheadas
-IMAGE_CACHE_DIR = Path.home() / ".hermes" / "hermesdm" / "generated_images"
+# Ruta base para imágenes cacheadas — configurable via HERMESDM_DATA_DIR
+_DATA_DIR = os.environ.get("HERMESDM_DATA_DIR", "~/.hermes/hermesdm")
+IMAGE_CACHE_DIR = Path(_DATA_DIR).expanduser() / "generated_images"
 
 
 def _ensure_cache_dir() -> Path:
@@ -44,12 +46,19 @@ def generate_scene_image(
     Returns:
         Ruta de la imagen generada, o None si falla
     """
-    script = "/home/hermes/scripts/image_from_scene.py"
-    venv_py = "/home/hermes/hermesdm/venv/bin/python3"
+    # Buscar image_from_scene.py junto a este archivo, o en scripts/
+    _scripts_dir = Path(__file__).parent.parent / "scripts"
+    _fallback_script = Path("/usr/local/bin/image_from_scene.py")
+    script = _scripts_dir / "image_from_scene.py"
 
-    if not os.path.exists(script):
-        print(f"[image_generator] image_from_scene.py not found at {script}")
+    # Usar sys.executable en vez de path hardcodeado al venv
+    python_bin = sys.executable
+
+    if not script.exists() and not _fallback_script.exists():
+        print(f"[image_generator] image_from_scene.py not found (tried {script} and {_fallback_script})")
         return None
+
+    actual_script = str(script if script.exists() else _fallback_script)
 
     # Generar path desde hash del narrative
     _ensure_cache_dir()
@@ -59,7 +68,7 @@ def generate_scene_image(
 
     try:
         result = subprocess.run(
-            [venv_py, script, narrative, "--output", output_path, "--timeout", str(timeout)],
+            [python_bin, actual_script, narrative, "--output", output_path, "--timeout", str(timeout)],
             capture_output=True,
             text=True,
             timeout=timeout + 10,

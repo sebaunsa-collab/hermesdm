@@ -1208,8 +1208,8 @@ class TestBuildApp:
             instance.build.return_value = mock_app_instance
             from bot.telegram_handler import build_app
             build_app()
-            # We expect 42 CommandHandlers (incl. combat + resume + config + map + me + give + countdown + npcs + npcsearch + npcnote + npcmemory)
-            assert call_count == 42, f"Expected 42 handler registrations, got {call_count}"
+            # We expect 47 CommandHandlers (incl. combat + resume + config + map + me + give + countdown + npcs + npcsearch + npcnote + npcmemory + j + perfecto + arrancamos + cancel_setup)
+            assert call_count == 48, f"Expected 48 handler registrations, got {call_count}"
 
 # ------------------------------------------------------------------
 # Error handling — all handlers
@@ -1249,7 +1249,7 @@ async def test_echo_handler_ignores_ooc_short(mock_update, mock_context):
 
 @pytest.mark.asyncio
 async def test_echo_handler_demands_roll_with_active_campaign(mock_update, mock_context):
-    """Free text with active campaign → bot demands /roll first."""
+    """Free text with active campaign → bot demands /j or /act first."""
     cs = mock_context.chat_data["_hermes_state"]
     cs.active_campaign = "test-campaign-001"
 
@@ -1258,8 +1258,8 @@ async def test_echo_handler_demands_roll_with_active_campaign(mock_update, mock_
 
     mock_update.message.reply_text.assert_called_once()
     text = mock_update.message.reply_text.call_args[0][0]
-    assert "Usá /act antes de tu acción" in text
-    assert "/act" in text
+    assert "Usá /j" in text
+    assert "/j" in text
 
 
 @pytest.mark.asyncio

@@ -309,7 +309,7 @@ class NarrativeGenerator:
         details from state, then applies any context overrides.
         """
         campaign = state.get("campaign", {})
-        location = campaign.get("current_location") or "an unknown place"
+        location = campaign.get("current_location") or "un lugar desconocido"
         characters = state.get("characters", {})
         npcs = state.get("npcs", {})
 
@@ -351,7 +351,7 @@ class NarrativeGenerator:
             "reaction_description": "te observa con recelo",
             "emotional_tone": "cargado de tensión no dicha",
             "speaker": "Una voz emerge",
-            "listener_reaction": "Sopesas sus palabras con cuidado.",
+            "listener_reaction": "Sopesás sus palabras con cuidado.",
             "environment": state.get("world", {}).get(
                 "current_environment", "campo de batalla"
             ),
@@ -365,7 +365,18 @@ class NarrativeGenerator:
             "opportunity_available": "Entrenamiento o preparación es posible",
         }
 
-        # Apply state overrides
+        # Read setup lore for campaign-specific overrides
+        setup = state.get("setup", {})
+        lore = setup.get("lore", {}) if setup else {}
+        if lore.get("starting_location_desc"):
+            context["sensory_detail"] = lore["starting_location_desc"]
+            context["environmental_detail"] = lore["starting_location_desc"]
+        if lore.get("main_threat"):
+            context["ambient_threat"] = f"La presencia de {lore['main_threat']} se siente cerca"
+        if setup.get("premise"):
+            context["revelation"] = setup["premise"]
+
+        # Apply explicit overrides (including player_action from ActionRouter)
         for key, value in overrides.items():
             if key in context or key in [
                 "location",

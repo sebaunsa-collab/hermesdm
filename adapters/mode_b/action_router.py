@@ -177,15 +177,9 @@ class ActionRouter:
         """
         intent = self._parse(action_text)
 
-        # AI fallback para acciones ambiguas (no clasificadas)
-        if intent.action_type == "explore":
-            ai_intent = self._interpret_with_ai(action_text)
-            if ai_intent:
-                intent = ai_intent
-
         resolution = self._resolve(intent)
         scene_type = scene_type_override or self._classify(intent, resolution)
-        ctx = self._build_context(intent, resolution, scene_type)
+        ctx = self._build_context(intent, resolution, scene_type, action_text)
         narrative = _generate_narrative(scene_type, ctx, milestone_context)
 
         return ActionResult(
@@ -862,6 +856,53 @@ class ActionRouter:
             attack_roll=total,
         )
 
+    def _resolve_dialogue(self, intent: ActionIntent) -> ActionResolution:
+        """
+        Resuelve una acción de diálogo.
+        No tira dados — la resolución es narrativa.
+        Busca el NPC objetivo en el estado para generar contexto.
+        """
+        target = intent.target or "el PNJ"
+
+        # Buscar NPC en el estado para contexto narrativo
+        npc_data = None
+        if self.state and "npcs" in self.state:
+            npcs = self.state["npcs"]
+            # Buscar por nombre (case-insensitive)
+            target_lower = target.lower()
+            for npc_id, npc in npcs.items():
+                npc_name = npc.get("name", npc_id).lower()
+                if target_lower in npc_name or npc_name in target_lower:
+                    npc_data = npc
+                    break
+
+        if npc_data:
+            npc_name = npc_data.get("name", target)
+            npc_role = npc_data.get("role", "")
+            disposition = npc_data.get("disposition", "NEUTRAL")
+
+            # Determinar reacción base según disposición
+            if disposition == "HOSTILE":
+                reaction = f"{npc_name} te mira con hostilidad."
+            elif disposition == "FRIENDLY":
+                reaction = f"{npc_name} te saluda con una sonrisa."
+            else:
+                reaction = f"{npc_name} te observa con cautela."
+
+            mechanic = f"🗣️ Diálogo con {npc_name} ({npc_role}). {reaction}"
+        else:
+            mechanic = f"🗣️ Intentas hablar con {target}. No hay nadie con ese nombre cerca."
+
+        return ActionResolution(
+            success=True,  # Diálogo no falla mecánicamente
+            hit=None,
+            damage=None,
+            roll=None,
+            dc=None,
+            mechanic_inline=mechanic,
+            attack_roll=0,
+        )
+
     def _resolve_social(self, action_type: str, intent: ActionIntent, dc: int) -> ActionResolution:
         """Helper para acciones sociales (persuade/deceive/intimidate)."""
         roll_result = _roll_dice("1d20")
@@ -956,75 +997,37 @@ class ActionRouter:
             return SceneType.EXPLORATION
         return SceneType.EXPLORATION
 
-    def _interpret_with_ai(self, action_text: str) -> ActionIntent | None:
-        """
-        Fallback: usa MiniMax para clasificar acciones ambiguas.
-        Solo se llama cuando _parse no puede clasificar con certeza (action_type='explore').
-        Returns None si falla o no hay API key.
-        """
-        import json
-        import os
-        import urllib.request
-
-        api_key = os.getenv("MINIMAX_API_KEY")
-        if not api_key:
-            return None
-
-        prompt = f"""Clasificá esta acción de D&D 5e:
-"{action_text}"
-
-Devolvelo en JSON:
-{{
-  "action_type": "attack|skill|cast|disengage|dash|hide|help|dodge|ready|shove|persuade|deceive|intimidate|investigate|medicine|history|arcana|religion|survival|sleight|athletics|acrobatics|animal|use_object|explore",
-  "ability": "str|dex|int|wis|cha",
-  "dc": 10-20,
-  "description": "descripción corta",
-  "narrative_hint": "pista narrativa"
-}}"""
-
-        try:
-            req = urllib.request.Request(
-                "https://api.minimax.chat/v1/text/chatcompletion_pro?GroupId=YOUR_GROUP_ID",
-                data=json.dumps({
-                    "model": "MiniMax-Text-01",
-                    "messages": [{"role": "user", "content": prompt}]
-                }).encode(),
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                result = json.loads(resp.read())
-            content = result["choices"][0]["message"]["content"]
-            data = json.loads(content)
-            return ActionIntent(
-                action_type=data.get("action_type", "explore"),
-                target=None,
-                params={
-                    "description": data.get("description", ""),
-                    "narrative_hint": data.get("narrative_hint", ""),
-                },
-            )
-        except Exception:
-            return None
-
-    def _build_context(self, intent: ActionIntent, resolution: ActionResolution, scene_type: SceneType) -> dict:
+    def _build_context(self, intent: ActionIntent, resolution: ActionResolution, scene_type: SceneType, action_text: str) -> dict:
         """Arma el dict de contexto para NarrativeGenerator."""
         char_name = self.char.name if self.char else "Tu personaje"
         target = intent.target or "el objetivo"
 
         # Datos del world state (si hay)
         location = "el dungeon"
+        location_desc = ""
         npc_name = "Un guerrero"
         emotional_tone = "misterioso"
         campaign_name = "La aventura"
+        main_threat = ""
 
         if self.state:
-            camp = self.state.get("campaign", {})
-            location = camp.get("current_location", {}).get("name", "el dungeon")
+            camp = self.state.get("campaign", {}) or {}
+            # current_location puede ser string (desde cmd_begin) o dict (viejo formato)
+            raw_loc = camp.get("current_location")
+            if isinstance(raw_loc, dict):
+                location = raw_loc.get("name", "el dungeon")
+            elif isinstance(raw_loc, str):
+                location = raw_loc
+            else:
+                location = "el dungeon"
+            location_desc = camp.get("current_location_desc", "")
             campaign_name = camp.get("name", "La aventura")
-            npcs = self.state.get("npcs", {})
+            main_threat = camp.get("main_threat", "")
+            npcs = self.state.get("npcs", {}) or {}
             if npcs:
-                npc_name = list(npcs.keys())[0] if npcs else "Un guerrero"
+                first_npc_id = list(npcs.keys())[0]
+                first_npc = npcs[first_npc_id]
+                npc_name = first_npc.get("name", first_npc_id)
 
         ctx: dict = {
             # Meta
@@ -1040,11 +1043,13 @@ Devolvelo en JSON:
             "bystanders_react": "Los presentes contienen el aliento.",
             "situation": "El combate continúa.",
             # Exploration
-            "environmental_detail": "la oscuridad es interrumpida por antorchas distantes",
-            "sensory_detail": "un aroma metálico llena el aire",
+            "environmental_detail": location_desc or "la oscuridad es interrumpida por antorchas distantes",
+            "sensory_detail": location_desc or "un aroma metálico llena el aire",
             "character_present": npc_name,
             "npc_present": npc_name,
-            "reaction": "observa atento",
+            "npc_or_character_present": npc_name,
+            "reaction_description": "te observa con recelo",
+            "action_description": action_text,
             "obstacle": "El camino adelante permanece abierto.",
             "emotional_tone": emotional_tone,
             # Dialogue
@@ -1057,8 +1062,8 @@ Devolvelo en JSON:
             "tension_point": "Una pausa incómoda se extiende entre ustedes.",
             # Story beat
             "incident_description": "un descubrimiento clave cambia la situación",
-            "witness": "Todos los presentes",
-            "response": "reaccionan con asombro",
+            "witness_or_participant": "Todos los presentes",
+            "response_to_incident": "reaccionan con asombro",
             "consequence_looming": "Las consecuencias serán inevitables.",
             "revelation": "algo ha cambiado para siempre",
             "affected_party": "El grupo",
@@ -1067,12 +1072,16 @@ Devolvelo en JSON:
             "resources_available": "Hay recursos disponibles para quien los necesite",
             "rest_comforts": "la oscuridad te envuelve protectivamente",
             "party_status": "El grupo está exhausto pero a salvo",
+            "ambient_details": "La noche transcurre lentamente",
+            "opportunity_available": "Entrenamiento o preparación es posible",
             # Action specifics
             "action": intent.action_type,
             "attack_description": f"{char_name} ataca a {target}",
             "hit": resolution.hit,
             "nat_20": resolution.nat_20,
             "nat_1": resolution.nat_1,
+            "player_action": action_text,
+            "player_action_type": intent.action_type,
         }
 
         # Sobrescribir con datos específicos del resultado de combate

@@ -310,7 +310,7 @@ No escribas nada más que el JSON."""
         response = provider.text(
             prompt,
             system="Eres un DM creativo de D&D 5e. Generás campañas originales. Nunca repetís el input del usuario. Respondés solo en JSON válido.",
-            max_tokens=2048,
+            max_tokens=7500,
             temperature=0.85,
         )
 
@@ -396,7 +396,7 @@ Reglas:
                 response = provider.text(
                     fallback_prompt,
                     system="Eres un DM creativo. Generás campañas originales. Respondés solo en JSON.",
-                    max_tokens=2048,
+                    max_tokens=7500,
                     temperature=0.9,
                 )
                 raw = response.text.strip()

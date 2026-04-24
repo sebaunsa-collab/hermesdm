@@ -1041,6 +1041,15 @@ async def cmd_begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Mark adventure as started
         state["adventure_started"] = True
 
+        # Persist campaign metadata from setup so all handlers can read it
+        state["campaign"]["current_location"] = lore.get("starting_location", "Ubicación desconocida")
+        state["campaign"]["current_location_desc"] = lore.get("starting_location_desc", "")
+        state["campaign"]["main_threat"] = lore.get("main_threat", "")
+        state["campaign"]["premise"] = setup.get("premise", "")
+        state["campaign"]["hook"] = setup.get("hook", "")
+        state["campaign"]["tone"] = setup.get("tone", "serious")
+        state["campaign"]["setting_type"] = setup.get("setting_type", "fantasy")
+
         # Transfer story_arc from setup to state if present
         setup_arc = setup.get("story_arc")
         if setup_arc and state.get("story_arc") is None:
@@ -3612,7 +3621,16 @@ async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TY
         milestone_ctx = pacing.get_milestone_context()
 
         router = ActionRouter(state=state, character=char)
-        result = router.route(update, action_text, scene_type_override=scene_type, milestone_context=milestone_ctx)
+        try:
+            result = router.route(update, action_text, scene_type_override=scene_type, milestone_context=milestone_ctx)
+        except Exception as e:
+            log.exception(f"Action routing failed: {e}")
+            await edit_text(bot, chat_id, msg_id, "Error procesando acción. Reiniciá la campaña si persiste.")
+            return
+
+        if not result:
+            await edit_text(bot, chat_id, msg_id, "No se pudo procesar la acción. Probá de nuevo.")
+            return
 
         # ── Check milestone advancement ────────────────────────────────────────
         try:

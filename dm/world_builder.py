@@ -187,6 +187,52 @@ def generate_npcs(count: int = 3) -> dict:
     return npcs
 
 
+def _is_echo(description: str, premise: str, threshold: float = 0.60) -> bool:
+    """Detect if the LLM echoed the user's description in the premise."""
+    import re
+    desc_words = set(re.findall(r'\b\w+\b', description.lower()))
+    premise_words = set(re.findall(r'\b\w+\b', premise.lower()))
+    if not desc_words:
+        return False
+    overlap = len(desc_words & premise_words) / len(desc_words)
+    return overlap > threshold
+
+
+def _generate_procedural_npcs(description: str, count: int = 3) -> list[dict]:
+    """Generate NPCs from description keywords when no themed template matches."""
+    import re
+    # Extract capitalized words and significant nouns from description
+    nouns = re.findall(r'\b[A-Z][a-z]+\b', description)
+    if not nouns:
+        # Fallback to any words that look like proper nouns or key terms
+        words = re.findall(r'\b\w+\b', description)
+        # Filter out common Spanish stop words
+        stop_words = {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
+                      "y", "o", "pero", "si", "no", "con", "por", "para", "en", "a", "que",
+                      "es", "son", "una", "quiero", "historia", "con", "las", "siguientes",
+                      "clases", "seria", "oscura", "gremio", "clase", "clases"}
+        nouns = [w for w in words if w.lower() not in stop_words and len(w) > 3]
+
+    roles = ["mercenario", "sacerdote", "mercader", "espía", "eremita", "noble", "artista",
+             "guardián", "mensajero", "alquimista", "forajido", "erudito"]
+    personalities = ["cínico", "apasionado", "paranoico", "noble", "sarcástico", "misterioso",
+                     "melancólico", "fervoroso", "despiadado", "compasivo"]
+    npcs = []
+    for i in range(min(count, max(len(nouns) if nouns else 0, 3))):
+        if i < len(nouns) and nouns:
+            name = nouns[i]
+        else:
+            name = f"Desconocido {i+1}"
+        role = random.choice(roles)
+        personality = random.choice(personalities)
+        npcs.append({
+            "name": name,
+            "role": f"{personality.capitalize()} {role}",
+            "dialogue": f"Algo sobre {name.lower()} no es lo que parece..."
+        })
+    return npcs
+
+
 def generate_setup_with_ai(description: str, tone: str = "serious", setting: str = "fantasy", pacing_level: str = "medium") -> dict:
     """
     Generate campaign setup (premise, hook, lore, factions, NPCs) using AI.
@@ -207,7 +253,7 @@ def generate_setup_with_ai(description: str, tone: str = "serious", setting: str
     # Extraer clases del texto antes de generar
     extract_classes_from_text(description)
 
-    # Try AI generation
+    # ── Layer 1: AI generation with hardened prompt ──────────────────────────
     try:
         api_key = os.getenv("MINIMAX_API_KEY", "")
         if not api_key:
@@ -217,29 +263,29 @@ def generate_setup_with_ai(description: str, tone: str = "serious", setting: str
 
         provider = MiniMaxProvider(api_key=api_key)
 
-        prompt = f"""Eres un DM de D&D 5e. El DM quiere una campaña con esta descripción:
+        prompt = f"""Eres un DM creativo de D&D 5e con 20 años de experiencia.
 
-"{description}"
+El DM te da esta IDEA para una campaña. NO copies ni repitas esta idea. En su lugar, CREÁ contenido original e inspirado en ella.
 
-Tono solicitado: {tone}
-Setting: {setting}
+IDEA DEL DM:
+{description}
 
-Generá:
-1. Una "premise" de 2-3 oraciones: qué son los personajes y por qué están juntos
-2. Un "hook" narrativo para el primer encuentro: qué pasa, qué deben hacer los PJ
-3. Descripción del "starting_location": un lugar específico donde empieza la campaña
-4. Una "main_threat": cuál es el conflicto central
-5. Facciones: 2-3 facciones en tensión (nombre, estado: DOMINANT/RISING/HIDDEN/etc.)
-6. NPCs iniciales: 2-3 NPCs relevantes con nombre, rol, y una línea de diálogo característica
-7. Clases temáticas: 3-5 nombres de clases de PJ que encajen en este setting (ej: para un puerto pirata podrían ser Corsario, Navegante, Contrabandista, Bucanero, Oficial). NO uses las clases default de D&D. Inventá nombres que hagan sentido para la descripción del DM.
-8. Equipo inicial temático: 3-5 objetos de starting equipment que encajen en el setting (ej: para horror: linterna de aceite, crucifijo de plata, diario manchado, laudano, daga de obsidiana). Cada item debe tener nombre, descripción corta de 1 línea, y si es consumible (true/false).
-9. Story arc: un arco narrativo con milestones. Según el pacing_level ({pacing_level}), generá:
-   - "short": 4 milestones (hook, rising_action, climax, resolution)
-   - "medium": 5 milestones (hook, rising_action_1, rising_action_2, climax, resolution)
-   - "long": 7 milestones (hook, rising_action_1, midpoint, rising_action_2, rising_action_3, climax, resolution)
-   Cada milestone necesita: id, type, description (qué debe pasar narrativamente en esa etapa, 1-2 oraciones).
+---
 
-Respondé en español, en JSON con este formato exacto:
+Generá una campaña COMPLETA en español. Cada campo debe ser original, creativo, y específico. Nada de textos genéricos.
+
+1. **premise** (2-3 oraciones): ¿Quiénes son los PJ y qué los une? Usá vocabulario específico del setting. NO menciones "aventureros genéricos".
+2. **hook** (2 oraciones): ¿Qué evento disruptivo arranca la aventura? Debe ser concreto y urgente.
+3. **starting_location** (nombre propio): Un lugar específico con nombre propio. NO uses "un lugar olvidado".
+4. **starting_location_desc** (2-3 oraciones): Descripción sensorial y atmosférica del lugar.
+5. **main_threat** (1 oración): La amenaza central con nombre propio si aplica.
+6. **factions** (2-3): Nombre + estado (DOMINANT/RISING/HIDDEN/CORRUPT/etc). Deben estar en conflicto.
+7. **npcs** (2-3): Nombre propio, rol específico, y una línea de diálogo que revele personalidad. Deben estar relacionados con el setting.
+8. **classes** (3-5): Nombres de clases temáticas que encajen en el setting. NO uses "Guerrero/Mago/Pícaro" a menos que sea fantasy genérico.
+9. **starting_equipment** (3-5): Objetos con nombre y descripción corta.
+10. **story_arc**: Milestones según pacing_level={pacing_level}.
+
+Respondé ÚNICAMENTE en JSON válido con este formato exacto:
 {{
   "premise": "...",
   "hook": "...",
@@ -263,8 +309,8 @@ No escribas nada más que el JSON."""
 
         response = provider.text(
             prompt,
-            system="Eres un DM creativo de D&D 5e. Solo respondés en JSON válido.",
-            max_tokens=800,
+            system="Eres un DM creativo de D&D 5e. Generás campañas originales. Nunca repetís el input del usuario. Respondés solo en JSON válido.",
+            max_tokens=2048,
             temperature=0.85,
         )
 
@@ -276,6 +322,11 @@ No escribas nada más que el JSON."""
             raw = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
 
         parsed = json.loads(raw)
+
+        # ── Layer 2: Echo detection ──────────────────────────────────────────
+        premise = parsed.get("premise", "")
+        if _is_echo(description, premise):
+            raise ValueError("AI echoed user description — triggering fallback")
 
         # Extract classes from AI response or fallback to description extraction
         classes = parsed.get("classes")
@@ -298,7 +349,7 @@ No escribas nada más que el JSON."""
 
         return {
             "description": description,
-            "premise": parsed.get("premise", ""),
+            "premise": premise,
             "hook": parsed.get("hook", ""),
             "tone": tone,
             "setting_type": setting,
@@ -315,30 +366,109 @@ No escribas nada más que el JSON."""
             "story_arc": story_arc.to_dict(),
         }
 
-    except Exception as e:
-        # Fallback: use template-based world builder, customized with description
+    except Exception as ai_err:
+        # ── Layer 3: Second-chance AI call with simplified prompt ───────────
+        try:
+            api_key = os.getenv("MINIMAX_API_KEY", "")
+            if api_key:
+                from dm.provider_client import MiniMaxProvider
+                provider = MiniMaxProvider(api_key=api_key)
+
+                fallback_prompt = f"""Crea una campaña de D&D 5e basada en esta idea: {description}
+
+Responde en JSON:
+{{
+  "premise": "...",
+  "hook": "...",
+  "starting_location": "...",
+  "starting_location_desc": "...",
+  "main_threat": "...",
+  "factions": {{"...": "..."}},
+  "npcs": [{{"name": "...", "role": "...", "dialogue": "..."}}],
+  "classes": ["..."],
+  "starting_equipment": [{{"name": "...", "description": "...", "is_consumable": false}}]
+}}
+
+Reglas:
+- NO repitas la idea del usuario.
+- Todo contenido debe ser original y específico.
+"""
+                response = provider.text(
+                    fallback_prompt,
+                    system="Eres un DM creativo. Generás campañas originales. Respondés solo en JSON.",
+                    max_tokens=2048,
+                    temperature=0.9,
+                )
+                raw = response.text.strip()
+                if raw.startswith("```"):
+                    lines = raw.split("\n")
+                    raw = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
+                parsed = json.loads(raw)
+
+                premise = parsed.get("premise", "")
+                if not _is_echo(description, premise):
+                    classes = parsed.get("classes")
+                    if not classes:
+                        classes = extract_classes_from_text(description)
+                    if not classes:
+                        classes = _generate_themed_classes(setting, description)
+
+                    story_arc_data = parsed.get("story_arc")
+                    if story_arc_data:
+                        from dm.story_arc import create_story_arc_from_ai_response
+                        story_arc = create_story_arc_from_ai_response(
+                            pacing_level=story_arc_data.get("pacing_level", pacing_level),
+                            ai_milestones=story_arc_data.get("milestones", []),
+                        )
+                    else:
+                        from dm.story_arc import create_default_story_arc
+                        story_arc = create_default_story_arc(pacing_level)
+
+                    return {
+                        "description": description,
+                        "premise": premise,
+                        "hook": parsed.get("hook", ""),
+                        "tone": tone,
+                        "setting_type": setting,
+                        "approved": False,
+                        "classes": classes,
+                        "lore": {
+                            "factions": parsed.get("factions", {}),
+                            "main_threat": parsed.get("main_threat", ""),
+                            "starting_location": parsed.get("starting_location", ""),
+                            "starting_location_desc": parsed.get("starting_location_desc", ""),
+                            "npcs": parsed.get("npcs", []),
+                        },
+                        "starting_equipment": parsed.get("starting_equipment", []),
+                        "story_arc": story_arc.to_dict(),
+                    }
+        except Exception:
+            pass  # Fall through to template fallback
+
+        # ── Layer 4: Template-based fallback (never concatenates raw description) ──
         import warnings
         import re
-        warnings.warn(f"AI setup generation failed ({e}), falling back to templates")
+        warnings.warn(f"AI setup generation failed ({ai_err}), falling back to templates")
 
-        # Parse key elements from the user's description
         desc_lower = description.lower()
-        threat = ""
-        location = ""
 
-        # Extract threat/antagonist hints from description
+        # Extract key nouns from description for procedural generation
+        key_nouns = re.findall(r'\b[A-Z][a-z]+\b', description)
+        if not key_nouns:
+            words = re.findall(r'\b\w+\b', description)
+            stop_words = {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
+                          "y", "o", "pero", "si", "no", "con", "por", "para", "en", "a", "que",
+                          "es", "son", "quiero", "historia", "con", "las", "siguientes",
+                          "clases", "seria", "oscura", "gremio", "clase"}
+            key_nouns = [w for w in words if w.lower() not in stop_words and len(w) > 3]
+
+        # Extract threat/antagonist hints
+        threat = ""
         threat_patterns = [
-            r"rey demonio",
-            r"rey humano",
-            r"dragón",
-            r"demon[io]",
-            r"villano",
-            r"corrupto",
-            r"tirano",
-            r"malvado",
-            r"amenaza",
-            r"dr.?king",
-            r"demon.?king",
+            r"rey demonio", r"rey humano", r"dragón", r"demon[io]", r"villano",
+            r"corrupto", r"tirano", r"malvado", r"amenaza", r"dr.?king", r"demon.?king",
+            r"zombie[s]?", r"no[-]?muerto[s]?", r"infestación", r"plaga",
+            r"ninja[s]?", r"clan oculto", r"asesino[s]?",
         ]
         for pat in threat_patterns:
             m = re.search(pat, desc_lower)
@@ -346,41 +476,69 @@ No escribas nada más que el JSON."""
                 threat = m.group(0).capitalize()
                 break
 
-        # Detect setting type from description
-        if any(w in desc_lower for w in ["ciudad", "puerto", "reino", "palacio", "castillo"]):
-            location = "Ciudad amurallada"
-        elif any(w in desc_lower for w in ["bosque", "selva", "montaña", "cueva", "mazmorra"]):
-            location = "Tierras salvajes"
-        else:
+        # Detect location from description (procedural, not keyword-mapped)
+        location = ""
+        location_keywords = {
+            "ciudad": "Ciudad amurallada", "puerto": "Puerto de las Sombras",
+            "reino": "Reino de los Caidos", "palacio": "Palacio de los Lamentos",
+            "castillo": "Castillo de las Ruinas", "bosque": "Bosque de los Susurros",
+            "selva": "Selva de las Sombras", "montaña": "Montañas del Olvido",
+            "cueva": "Cavernas del Eco", "mazmorra": "Mazmorras del Silencio",
+            "mar": "Mar de la Niebla", "nave": "Nave Abandonada",
+        }
+        for kw, loc in location_keywords.items():
+            if kw in desc_lower:
+                location = loc
+                break
+        if not location and key_nouns:
+            location = f"las Tierras de {key_nouns[0]}"
+        if not location:
             location = "un lugar olvidado"
 
         # Detect tone
         detected_tone = tone
-        if any(w in desc_lower for w in ["serio", "político", "oscuro", "dark"]):
+        if any(w in desc_lower for w in ["oscuro", "oscura", "dark", "sombrio", "sombria", "macabro", "macabra"]):
             detected_tone = "dark"
-        elif any(w in desc_lower for w in ["épico", "heroico", "épico"]):
+        elif any(w in desc_lower for w in ["épico", "épica", "heroico", "heroica", "legendario", "legendaria"]):
             detected_tone = "epic"
+        elif any(w in desc_lower for w in ["serio", "seria", "dramático", "dramática", "trágico", "trágica"]):
+            detected_tone = "serious"
+        elif any(w in desc_lower for w in ["comico", "comica", "gracioso", "graciosa", "parodia", "divertido", "divertida"]):
+            detected_tone = "comedic"
 
-        # Build customized premise from description
-        premise = f"Los personajes son aventureros comprometidos con una misión peligrosa: {description.strip('.')}. Un conflicto de poder y traición los enfrentará a enemigos inesperados."
+        # Build premise from key nouns (never concatenates raw description)
+        if key_nouns:
+            noun_str = ", ".join(key_nouns[:3])
+            premise = (
+                f"En un mundo donde {noun_str} definen el destino de todos, "
+                f"un grupo de sobrevivientes debe enfrentar una conspiración que amenaza con consumarlo todo. "
+                f"La verdad está enterrada en secretos que nadie quería desenterrar."
+            )
+        else:
+            premise = (
+                "En las sombras de un reino fracturado, un grupo de desconocidos "
+                "se ve arrastrado a una conspiración que desafía todo lo que creen saber. "
+                "Cada elección tiene un precio, y el tiempo se agota."
+            )
 
-        # Extract player roles from description if mentioned
-        roles = []
-        role_patterns = ["mesa redonda", "caballeros", "mercenarios", "espías", "aventu", "héroe"]
-        for pat in role_patterns:
-            if pat in desc_lower:
-                roles.append(pat)
-        role_str = ", ".join(roles) if roles else "aventuross"
-
+        # Build hook referencing threat and location
         hook = (
-            f"La amenaza se cierne sobre {location.lower()}. "
-            f"Una alianza oculta entre {threat or 'fuerzas oscuras'} y figuras de poder amenaza con destruir todo. "
-            f"Los {role_str} deben actuar antes de que sea tarde."
+            f"La amenaza de {threat or 'una fuerza desconocida'} se cierne sobre {location}. "
+            f"Una revelación terrible sacude las bases del poder. "
+            f"Quienes no actúen pronto serán consumidos por la oscuridad que se avecina."
         )
 
         # Generate themed content for fallback
         fallback_classes = _generate_themed_classes(setting, description)
         fallback_npcs = _generate_themed_npcs(setting, description)
+        # If no themed NPCs matched, use procedural generation
+        if fallback_npcs == [
+            {"name": "Erna", "role": "Tabernera con oídos atentos", "dialogue": "La cerveza está fría y los rumores calientes."},
+            {"name": "Vorn", "role": "Capitán de la guardia", "dialogue": "Órdenes son órdenes. Preguntame después."},
+            {"name": "Mira", "role": "Erudita de biblioteca", "dialogue": "El conocimiento es poder. El poder corrompe. Hacé las cuentas."},
+        ]:
+            fallback_npcs = _generate_procedural_npcs(description, count=3)
+
         fallback_items = _generate_themed_items(setting, description)
 
         fallback = build_world(setting)
@@ -401,7 +559,7 @@ No escribas nada más que el JSON."""
                 "factions": factions,
                 "main_threat": threat or fallback["world"].get("main_threat", "Una amenaza se cierne sobre el mundo."),
                 "starting_location": location,
-                "starting_location_desc": f"{location} — {description[:100].strip()}. Un lugar donde el conflicto entre {threat or 'fuerzas oscuras'} y la justicia está a punto de estallar.",
+                "starting_location_desc": f"{location} — un lugar donde el conflicto entre {threat or 'fuerzas oscuras'} y la esperanza está a punto de estallar.",
                 "npcs": fallback_npcs,
             },
             "starting_equipment": fallback_items,
@@ -557,6 +715,38 @@ def _generate_themed_npcs(setting: str, description: str) -> list[dict]:
             {"name": "Lord Gearhart", "role": "Inventor excéntrico", "dialogue": "La ciencia es magia que funciona. Mi magia funciona *muy* bien."},
             {"name": "Agente Cogsworth", "role": "Espía del Ministerio", "dialogue": "Tengo ojos en cada engranaje de esta ciudad."},
             {"name": "Dra. Steamfield", "role": "Alquimista de vapor", "dialogue": "Las leyes de la naturaleza son... sugerencias."},
+        ],
+        # Demon / undead
+        "demonio": [
+            {"name": "Vex, el Ocaso", "role": "Sacerdote caído del rey demonio", "dialogue": "La carne es temporal. La oscuridad, eterna."},
+            {"name": "Hermana Mordrake", "role": "Exorcista con las manos quemadas", "dialogue": "He visto lo que hay detrás de los ojos de los poseídos. No duermo desde entonces."},
+            {"name": "El Último Creyente", "role": "Ermitaño que aún reza", "dialogue": "Dios no abandona... pero a veces tarda en responder."},
+        ],
+        "zombie": [
+            {"name": "Doctor Mordrake", "role": "Alquimista que estudia la plaga", "dialogue": "No son muertos... son la siguiente evolución."},
+            {"name": "Sargento Voss", "role": "Comandante de la línea de cuarentena", "dialogue": "Disparad a la cabeza. No preguntéis. No sentís lástima."},
+            {"name": "La Niña del Sótano", "role": "Superviviente inmune", "dialogue": "No me muerden. No sé por qué. Pero los demás sí..."},
+        ],
+        "ninja": [
+            {"name": "Sombra de Hielo", "role": "Espía del clan oculto", "dialogue": "He visto tu muerte. Fue silenciosa."},
+            {"name": "Maestro Kage", "role": "Viejo sensei traidor", "dialogue": "La lealtad es una herramienta. Como la katana: útil hasta que se rompe."},
+            {"name": "Shinobi Rojo", "role": "Asesino de élite", "dialogue": "Mi precio es alto. Mi silencio, más."},
+        ],
+        # Sword Art Online / VR / digital world
+        "sao": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
+        "vr": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
+        "digital": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
         ],
         # Default fantasy
         "fantasy": [

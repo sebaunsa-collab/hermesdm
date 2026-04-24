@@ -199,36 +199,54 @@ def _is_echo(description: str, premise: str, threshold: float = 0.60) -> bool:
 
 
 def _generate_procedural_npcs(description: str, count: int = 3) -> list[dict]:
-    """Generate NPCs from description keywords when no themed template matches."""
-    import re
-    # Extract capitalized words and significant nouns from description
-    nouns = re.findall(r'\b[A-Z][a-z]+\b', description)
-    if not nouns:
-        # Fallback to any words that look like proper nouns or key terms
-        words = re.findall(r'\b\w+\b', description)
-        # Filter out common Spanish stop words
-        stop_words = {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
-                      "y", "o", "pero", "si", "no", "con", "por", "para", "en", "a", "que",
-                      "es", "son", "una", "quiero", "historia", "con", "las", "siguientes",
-                      "clases", "seria", "oscura", "gremio", "clase", "clases"}
-        nouns = [w for w in words if w.lower() not in stop_words and len(w) > 3]
-
+    """Generate NPCs with invented names — never uses user's input words."""
+    # Invented names (never from user input)
+    first_names = [
+        "Aldric", "Mira", "Sera", "Vorn", "Jax", "Elara", "Corvus", "Thorn",
+        "Rika", "Kael", "Nyx", "Orin", "Lira", "Dax", "Fenn", "Iris",
+        "Cora", "Bran", "Yara", "Zev", "Nia", "Rook", "Silas",
+        "Tobin", "Vex", "Lyra", "Kade", "Juno", "Rafe", "Sable", "Dorian",
+        "Anya", "Cass", "Finn", "Nova", "Pike", "Rue", "Sage", "Talon",
+    ]
     roles = ["mercenario", "sacerdote", "mercader", "espía", "eremita", "noble", "artista",
              "guardián", "mensajero", "alquimista", "forajido", "erudito"]
     personalities = ["cínico", "apasionado", "paranoico", "noble", "sarcástico", "misterioso",
                      "melancólico", "fervoroso", "despiadado", "compasivo"]
+
+    # Unique dialogues per NPC (never placeholder)
+    dialogue_templates = [
+        "{name} te mira con {adj} y dice: 'He visto cosas que no te contaría ni bajo tortura.'",
+        "'El mundo cambió cuando {event}... y nosotros también.' — {name} suspira.",
+        "{name} se ajusta el cuello y murmura: 'Tenés dos opciones: correr o rezar. Yo elijo correr.'",
+        "'Dicen que {rumor}. Yo digo que es peor.' {name} te estudia con recelo.",
+        "{name} esboza una sonrisa {adj}: 'La última persona que confió en mí... bueno, no importa.'",
+        "'¿Buscás {object}? Todos lo buscan. Nadie lo encuentra. Nadie que viva, al menos.'",
+    ]
+
     npcs = []
-    for i in range(min(count, max(len(nouns) if nouns else 0, 3))):
-        if i < len(nouns) and nouns:
-            name = nouns[i]
-        else:
-            name = f"Desconocido {i+1}"
+    used_names = set()
+    for i in range(count):
+        name = first_names[i % len(first_names)]
+        if name in used_names:
+            name = f"{name} el {random.choice(['Joven', 'Viejo', 'Rápido', 'Triste'])}"
+        used_names.add(name)
+
         role = random.choice(roles)
         personality = random.choice(personalities)
+
+        tmpl = dialogue_templates[i % len(dialogue_templates)]
+        dialogue = tmpl.format(
+            name=name,
+            adj=random.choice(["fría", "triste", "dura", "vacía", "torcida"]),
+            event=random.choice(["la torre cayó", "el cielo se partió", "ellos llegaron", "todo se apagó"]),
+            rumor=random.choice(["el rey está muerto", "hay un traidor", "la puerta se abrió", "vienen por nosotros"]),
+            object=random.choice(["la verdad", "la salida", "poder", "redención"]),
+        )
+
         npcs.append({
             "name": name,
             "role": f"{personality.capitalize()} {role}",
-            "dialogue": f"Algo sobre {name.lower()} no es lo que parece..."
+            "dialogue": dialogue,
         })
     return npcs
 
@@ -265,9 +283,19 @@ def generate_setup_with_ai(description: str, tone: str = "serious", setting: str
 
         prompt = f"""Eres un DM creativo de D&D 5e con 20 años de experiencia.
 
-El DM te da esta IDEA para una campaña. NO copies ni repitas esta idea. En su lugar, CREÁ contenido original e inspirado en ella.
+CRÍTICO — Reglas de oro:
+1. NUNCA repitas, copies ni parafrasees el texto del usuario. Inventá TODO: nombres, lugares, descripciones.
+2. NUNCA uses palabras del input del usuario como nombres propios de lugares o NPCs.
+   Ejemplo de input: "quiero una historia de jóvenes en un juego VR"
+   → MAL: lugar = "Las Tierras de jóvenes", NPC = "juego"
+   → BIEN: lugar = "La Cúpula de Cristal", NPC = "Rika, la mensajera digital"
+3. Detectá el género del input y usalo como setting:
+   - Si menciona: VR, realidad virtual, online, digital, IA, red, servidor, juego, MMORPG → setting = "scifi"
+   - Si menciona: magia, dragones, reinos, castillos → setting = "fantasy"
+   - Si menciona: zombis, apocalipsis, supervivencia → setting = "zombie"
+   - Si menciona: horror, oscuro, maldito → setting = "horror"
 
-IDEA DEL DM:
+IDEA DEL DM (solo para inspiración, NO para copiar):
 {description}
 
 ---
@@ -276,14 +304,14 @@ Generá una campaña COMPLETA en español. Cada campo debe ser original, creativ
 
 1. **premise** (2-3 oraciones): ¿Quiénes son los PJ y qué los une? Usá vocabulario específico del setting. NO menciones "aventureros genéricos".
 2. **hook** (2 oraciones): ¿Qué evento disruptivo arranca la aventura? Debe ser concreto y urgente.
-3. **starting_location** (nombre propio): Un lugar específico con nombre propio. NO uses "un lugar olvidado".
+3. **starting_location** (nombre propio): Un lugar específico con nombre propio INVENTADO. NO uses "un lugar olvidado" ni palabras del input.
 4. **starting_location_desc** (2-3 oraciones): Descripción sensorial y atmosférica del lugar.
 5. **main_threat** (1 oración): La amenaza central con nombre propio si aplica.
 6. **factions** (2-3): Nombre + estado (DOMINANT/RISING/HIDDEN/CORRUPT/etc). Deben estar en conflicto.
-7. **npcs** (2-3): Nombre propio, rol específico, y una línea de diálogo que revele personalidad. Deben estar relacionados con el setting.
+7. **npcs** (2-3): Nombres propios INVENTADOS, rol específico, y una línea de diálogo que revele personalidad. Deben estar relacionados con el setting.
 8. **classes** (3-5): Nombres de clases temáticas que encajen en el setting. NO uses "Guerrero/Mago/Pícaro" a menos que sea fantasy genérico.
-9. **starting_equipment** (3-5): Objetos con nombre y descripción corta.
-10. **story_arc**: Milestones según pacing_level={pacing_level}.
+9. **starting_equipment** (3-5): Objetos con nombre y descripción corta, temáticos del setting.
+10. **story_arc**: Milestones según pacing_level={pacing_level}. Cada milestone debe tener una descripción concreta de >30 palabras.
 
 Respondé ÚNICAMENTE en JSON válido con este formato exacto:
 {{
@@ -347,7 +375,7 @@ No escribas nada más que el JSON."""
             from dm.story_arc import create_default_story_arc
             story_arc = create_default_story_arc(pacing_level)
 
-        return {
+        setup = {
             "description": description,
             "premise": premise,
             "hook": parsed.get("hook", ""),
@@ -365,6 +393,14 @@ No escribas nada más que el JSON."""
             "starting_equipment": parsed.get("starting_equipment", []),
             "story_arc": story_arc.to_dict(),
         }
+
+        # Post-procesamiento: sanitizar y validar
+        setup = _sanitize_setup(setup, description)
+        milestone_errors = _validate_milestones(setup)
+        if milestone_errors:
+            log.warning(f"[MILESTONE] Validation warnings: {'; '.join(milestone_errors)}")
+
+        return setup
 
     except Exception as ai_err:
         # ── Layer 3: Second-chance AI call with simplified prompt ───────────
@@ -424,7 +460,7 @@ Reglas:
                         from dm.story_arc import create_default_story_arc
                         story_arc = create_default_story_arc(pacing_level)
 
-                    return {
+                    setup = {
                         "description": description,
                         "premise": premise,
                         "hook": parsed.get("hook", ""),
@@ -442,6 +478,8 @@ Reglas:
                         "starting_equipment": parsed.get("starting_equipment", []),
                         "story_arc": story_arc.to_dict(),
                     }
+                    setup = _sanitize_setup(setup, description)
+                    return setup
         except Exception:
             pass  # Fall through to template fallback
 
@@ -490,8 +528,6 @@ Reglas:
             if kw in desc_lower:
                 location = loc
                 break
-        if not location and key_nouns:
-            location = f"las Tierras de {key_nouns[0]}"
         if not location:
             location = "un lugar olvidado"
 
@@ -506,24 +542,16 @@ Reglas:
         elif any(w in desc_lower for w in ["comico", "comica", "gracioso", "graciosa", "parodia", "divertido", "divertida"]):
             detected_tone = "comedic"
 
-        # Build premise from key nouns (never concatenates raw description)
-        if key_nouns:
-            noun_str = ", ".join(key_nouns[:3])
-            premise = (
-                f"En un mundo donde {noun_str} definen el destino de todos, "
-                f"un grupo de sobrevivientes debe enfrentar una conspiración que amenaza con consumarlo todo. "
-                f"La verdad está enterrada en secretos que nadie quería desenterrar."
-            )
-        else:
-            premise = (
-                "En las sombras de un reino fracturado, un grupo de desconocidos "
-                "se ve arrastrado a una conspiración que desafía todo lo que creen saber. "
-                "Cada elección tiene un precio, y el tiempo se agota."
-            )
+        # Build premise — never uses raw description keywords
+        premise = (
+            "En las sombras de un reino fracturado, un grupo de desconocidos "
+            "se ve arrastrado a una conspiración que desafía todo lo que creen saber. "
+            "Cada elección tiene un precio, y el tiempo se agota."
+        )
 
         # Build hook referencing threat and location
         hook = (
-            f"La amenaza de {threat or 'una fuerza desconocida'} se cierne sobre {location}. "
+            f"La amenaza de {threat or 'una fuerza desconocida'} se cierne sobre el horizonte. "
             f"Una revelación terrible sacude las bases del poder. "
             f"Quienes no actúen pronto serán consumidos por la oscuridad que se avecina."
         )
@@ -567,6 +595,82 @@ Reglas:
         }
 
 
+
+
+def _sanitize_setup(setup: dict, user_input: str) -> dict:
+    """
+    Post-procesador: detecta si el output contiene palabras literales del input del usuario.
+    Si detecta keywords del input usadas como nombres propios, marca el setup como sospechoso.
+    No modifica el contenido — solo loguea para debugging y retorna el setup.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    # Extraer palabras significativas del input (excluyendo stopwords y cortas)
+    stop_words = {
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
+        "y", "o", "pero", "si", "no", "con", "por", "para", "en", "a", "que",
+        "es", "son", "quiero", "historia", "con", "las", "siguientes", "clases",
+        "seria", "oscura", "gremio", "clase", "donde", "como", "una", "los", "las",
+        "del", "al", "se", "te", "me", "lo", "le", "les", "nos", "os", "mi", "tu",
+        "su", "sus", "mio", "tuyo", "suyo", "nuestro", "vuestro", "esta", "ese", "aquel",
+    }
+    words = re.findall(r'\b\w+\b', user_input.lower())
+    keywords = {w for w in words if w not in stop_words and len(w) > 3}
+
+    if not keywords:
+        return setup
+
+    # Campos a revisar
+    check_fields = [
+        ("premise", setup.get("premise", "")),
+        ("hook", setup.get("hook", "")),
+        ("starting_location", setup.get("lore", {}).get("starting_location", "")),
+        ("starting_location_desc", setup.get("lore", {}).get("starting_location_desc", "")),
+        ("main_threat", setup.get("lore", {}).get("main_threat", "")),
+    ]
+
+    # Revisar NPCs
+    for npc in setup.get("lore", {}).get("npcs", []):
+        check_fields.append((f"npc:{npc.get('name', '')}", npc.get("name", "")))
+        check_fields.append((f"npc_dialogue:{npc.get('name', '')}", npc.get("dialogue", "")))
+
+    violations = []
+    for field_name, text in check_fields:
+        text_lower = text.lower()
+        for kw in keywords:
+            # Solo flag si la palabra aparece como nombre propio (no como parte de otra)
+            if re.search(rf'\b{re.escape(kw)}\b', text_lower):
+                violations.append(f"'{kw}' found in {field_name}")
+
+    if violations:
+        log.warning(f"[SANITIZE] Setup contains user input keywords: {'; '.join(violations[:5])}")
+
+    return setup
+
+
+def _validate_milestones(setup: dict) -> list[str]:
+    """
+    Valida que los milestones tengan descripciones con contenido real.
+    Retorna lista de errores encontrados.
+    """
+    errors = []
+    story_arc = setup.get("story_arc", {})
+    milestones = story_arc.get("milestones", []) if isinstance(story_arc, dict) else []
+
+    if not milestones:
+        errors.append("No milestones found")
+        return errors
+
+    for i, ms in enumerate(milestones):
+        desc = ms.get("description", "")
+        if len(desc) < 30:
+            errors.append(f"Milestone {i} ('{ms.get('id', '?')}') description too short: '{desc[:50]}'")
+        if "avanza la trama principal" in desc.lower() or "milestone" in desc.lower():
+            errors.append(f"Milestone {i} ('{ms.get('id', '?')}') appears to be a placeholder")
+
+    return errors
+
 def _generate_themed_classes(setting: str, description: str) -> list[str]:
     """Generate themed class names based on setting and description keywords."""
     desc_lower = description.lower()
@@ -586,10 +690,17 @@ def _generate_themed_classes(setting: str, description: str) -> list[str]:
         "horror": ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"],
         "terror": ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"],
         "mansion": ["Cazador de Monstruos", "Ocultista", "Médico Forense", "Sacerdote", "Investigador"],
-        # Sci-fi
+        # Sci-fi / VR / Digital
         "sci-fi": ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"],
         "espacio": ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"],
         "nave espacial": ["Piloto", "Ingeniero", "Mercenario", "Hacker", "Científico"],
+        "virtual": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
+        "realidad virtual": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
+        "juego": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
+        "online": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
+        "digital": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
+        "mmorpg": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
+        "servidor": ["Espadachín Digital", "Hacker de Nodos", "Ingeniero de Servidores", "Mercenario de Datos", "Curandero de Código"],
         # Wild west
         "oeste": ["Pistolero", "Sheriff", "Forajido", "Gambler", "Cazador"],
         # Medieval
@@ -748,6 +859,31 @@ def _generate_themed_npcs(setting: str, description: str) -> list[dict]:
             {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
             {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
         ],
+        "virtual": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
+        "realidad virtual": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
+        "juego": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
+        "online": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
+        "mmorpg": [
+            {"name": "Kirito (NPC)", "role": "Espadachín negro legendario", "dialogue": "No importa en qué mundo estés... nunca dejes de luchar."},
+            {"name": "Asuna (NPC)", "role": "Vicecomandante de los Caballeros de Sangre", "dialogue": "En este mundo, la única regla es sobrevivir. Y yo no pierdo."},
+            {"name": "Kayaba", "role": "Creador del mundo digital", "dialogue": "Este es mi mundo. Mis reglas. Mi juego perfecto."},
+        ],
         # Default fantasy
         "fantasy": [
             {"name": "Erna", "role": "Tabernera con oídos atentos", "dialogue": "La cerveza está fría y los rumores calientes."},
@@ -858,12 +994,42 @@ def _generate_themed_items(setting: str, description: str) -> list[dict]:
             {"name": "Laudano", "quantity": 2, "weight": 0.2, "description": "Opio medicinal. Apaga el dolor... y la razón.", "is_consumable": True},
             {"name": "Daga de obsidiana", "quantity": 1, "damage_dice": "1d4", "weight": 0.5, "description": "Piedra volcánica negra. Corta más que el acero en ciertos lugares."},
         ],
-        # Sci-fi
+        # Sci-fi / VR / Digital
         "sci-fi": [
             {"name": "Pistola láser", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Modelo colonial estándar. Celda de energía: 50 disparos."},
             {"name": "Escáner biométrico", "quantity": 1, "weight": 0.5, "description": "Detecta signos vitales a 50m. No distingue humano de... otra cosa."},
             {"name": "Botiquín de campo", "quantity": 1, "weight": 1.0, "description": "Nanosuturas y analgésicos de síntesis. Sana 1d8+2 HP.", "is_consumable": True},
             {"name": "Tablet de datos", "quantity": 1, "weight": 0.3, "description": "Pantalla agrietada. Contiene registros... que alguien borró mal."},
+        ],
+        "virtual": [
+            {"name": "Espada de datos", "quantity": 1, "damage_dice": "1d8", "weight": 1.0, "description": "Hoja de luz azul que corta código y carne por igual."},
+            {"name": "Módulo de curación", "quantity": 2, "weight": 0.2, "description": "Paquete de regeneración digital. Restaura 2d4+2 HP.", "is_consumable": True},
+            {"name": "Visor de análisis", "quantity": 1, "weight": 0.5, "description": "Gafas que revelan estadísticas ocultas de enemigos y objetos."},
+            {"name": "Fragmento de código", "quantity": 1, "weight": 0.0, "description": "Una secuencia misteriosa que desbloquea puertas digitales."},
+        ],
+        "realidad virtual": [
+            {"name": "Espada de datos", "quantity": 1, "damage_dice": "1d8", "weight": 1.0, "description": "Hoja de luz azul que corta código y carne por igual."},
+            {"name": "Módulo de curación", "quantity": 2, "weight": 0.2, "description": "Paquete de regeneración digital. Restaura 2d4+2 HP.", "is_consumable": True},
+            {"name": "Visor de análisis", "quantity": 1, "weight": 0.5, "description": "Gafas que revelan estadísticas ocultas de enemigos y objetos."},
+            {"name": "Fragmento de código", "quantity": 1, "weight": 0.0, "description": "Una secuencia misteriosa que desbloquea puertas digitales."},
+        ],
+        "juego": [
+            {"name": "Espada de datos", "quantity": 1, "damage_dice": "1d8", "weight": 1.0, "description": "Hoja de luz azul que corta código y carne por igual."},
+            {"name": "Módulo de curación", "quantity": 2, "weight": 0.2, "description": "Paquete de regeneración digital. Restaura 2d4+2 HP.", "is_consumable": True},
+            {"name": "Visor de análisis", "quantity": 1, "weight": 0.5, "description": "Gafas que revelan estadísticas ocultas de enemigos y objetos."},
+            {"name": "Fragmento de código", "quantity": 1, "weight": 0.0, "description": "Una secuencia misteriosa que desbloquea puertas digitales."},
+        ],
+        "online": [
+            {"name": "Espada de datos", "quantity": 1, "damage_dice": "1d8", "weight": 1.0, "description": "Hoja de luz azul que corta código y carne por igual."},
+            {"name": "Módulo de curación", "quantity": 2, "weight": 0.2, "description": "Paquete de regeneración digital. Restaura 2d4+2 HP.", "is_consumable": True},
+            {"name": "Visor de análisis", "quantity": 1, "weight": 0.5, "description": "Gafas que revelan estadísticas ocultas de enemigos y objetos."},
+            {"name": "Fragmento de código", "quantity": 1, "weight": 0.0, "description": "Una secuencia misteriosa que desbloquea puertas digitales."},
+        ],
+        "mmorpg": [
+            {"name": "Espada de datos", "quantity": 1, "damage_dice": "1d8", "weight": 1.0, "description": "Hoja de luz azul que corta código y carne por igual."},
+            {"name": "Módulo de curación", "quantity": 2, "weight": 0.2, "description": "Paquete de regeneración digital. Restaura 2d4+2 HP.", "is_consumable": True},
+            {"name": "Visor de análisis", "quantity": 1, "weight": 0.5, "description": "Gafas que revelan estadísticas ocultas de enemigos y objetos."},
+            {"name": "Fragmento de código", "quantity": 1, "weight": 0.0, "description": "Una secuencia misteriosa que desbloquea puertas digitales."},
         ],
         "espacio": [
             {"name": "Pistola láser", "quantity": 1, "damage_dice": "1d8", "weight": 2.0, "description": "Modelo colonial estándar. Celda de energía: 50 disparos."},

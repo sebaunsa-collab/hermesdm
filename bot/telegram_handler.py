@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     # Leave empty to allow DMs and any group (e.g. ALLOWED_GROUP_ID=-1003916745496).
     ALLOWED_GROUP_ID: int | None = None
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

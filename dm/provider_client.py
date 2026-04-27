@@ -270,6 +270,8 @@ class GeminiProvider(LLMClient):
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
                 "temperature": temperature,
+                # Disable extended thinking — use all output tokens for actual content
+                "thinkingConfig": {"thinkingBudget": 0},
             },
         }
 
@@ -341,10 +343,12 @@ def get_provider(name: str, **kwargs) -> LLMClient:
     name = name.lower()
     if name == "minimax":
         return MiniMaxProvider(**kwargs)
+    if name == "gemini":
+        return GeminiProvider(**kwargs)
     # Agregar otros providers aquí
     # elif name == "openai":
     #     return OpenAIProvider(**kwargs)
     # elif name == "glm":
     #     return GLMProvider(**kwargs)
     else:
-        raise ValueError(f"Unknown provider: {name}. Supported: minimax")
+        raise ValueError(f"Unknown provider: {name}. Supported: minimax, gemini")

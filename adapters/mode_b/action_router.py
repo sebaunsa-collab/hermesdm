@@ -88,26 +88,51 @@ class ActionResult:
 # NarrativeGenerator wrapper (para _narrate)
 # ------------------------------------------------------------------#
 
-def _generate_narrative(scene_type: SceneType, context: dict, milestone_context: dict | None = None) -> str:
+def _generate_narrative(
+    scene_type: SceneType,
+    context: dict,
+    milestone_context: dict | None = None,
+    state: dict | None = None,
+) -> str:
     """
     Genera narración via NarrativeGenerator (template o LLM).
     Si no hay LLM client, usa template mode automáticamente.
+
+    Args:
+        scene_type: tipo de escena (COMBAT, EXPLORATION, etc.)
+        context: contexto aplanado del action_router (_build_context)
+        milestone_context: contexto de milestones del pacing_engine
+        state: state completo del juego (para extraer world, history, quests)
     """
     try:
         from dm.narrative_generator import Language, NarrativeGenerator
+        from dm.provider_client import get_provider
 
-        # Build minimal state dict
-        state = {
+        # Construir state completo para NarrativeGenerator._build_context
+        #world, history, quests no están en context aplanado — se extraen del state
+        game_state: dict = {
             "campaign": context.get("campaign", {}),
             "characters": context.get("characters", {}),
             "npcs": context.get("npcs", {}),
+            "setup": context.get("setup", {}),
+            "world": (state or {}).get("world", {}),
+            "history": (state or {}).get("history", []),
+            "quests": (state or {}).get("quests", {"active": [], "completed": []}),
         }
 
-        ng = NarrativeGenerator()
+        # Filtrar overrides que NO deben sobreescribir datos enriquecidos de NarrativeGenerator.
+        # action_router._build_context pone npc_present/character_present/npc_or_character_present
+        # como strings planos (solo el nombre). NarrativeGenerator._build_context construye
+        # versiones ENRIQUECIDAS con personality/secrets/voice que el LLM necesita.
+        # Solo se preservan overrides que action_router maneja mejor (location, speaker, action).
+        _ENRICHED_KEYS = {"npc_present", "character_present", "npc_or_character_present"}
+        ng_overrides = {k: v for k, v in context.items() if k not in _ENRICHED_KEYS}
+
+        ng = NarrativeGenerator(llm_client=get_provider("gemini"))
         result = ng.generate_scene(
-            state=state,
+            state=game_state,
             scene_type=scene_type,
-            context=context,
+            context=ng_overrides,
             language=Language.ES,
             milestone_context=milestone_context,
         )
@@ -180,7 +205,7 @@ class ActionRouter:
         resolution = self._resolve(intent)
         scene_type = scene_type_override or self._classify(intent, resolution)
         ctx = self._build_context(intent, resolution, scene_type, action_text)
-        narrative = _generate_narrative(scene_type, ctx, milestone_context)
+        narrative = _generate_narrative(scene_type, ctx, milestone_context, state=self.state)
 
         return ActionResult(
             narrative=narrative,
@@ -997,7 +1022,7 @@ class ActionRouter:
             return SceneType.EXPLORATION
         return SceneType.EXPLORATION
 
-    def _build_context(self, intent: ActionIntent, resolution: ActionResolution, scene_type: SceneType, action_text: str) -> dict:
+    def _build_context(self, intent: ActionIntent, resolution: ActionResolution, scene_type: SceneType, action_text: str = "") -> dict:
         """Arma el dict de contexto para NarrativeGenerator."""
         char_name = self.char.name if self.char else "Tu personaje"
         target = intent.target or "el objetivo"
@@ -1039,12 +1064,17 @@ class ActionRouter:
             "location": location,
             "attacker": char_name,
             "defender": target,
+            # ── Setup data (genre, premise, lore) para NarrativeGenerator ──
+            "setup": self.state.get("setup", {}) if self.state else {},
             # Combat
             "bystanders_react": "Los presentes contienen el aliento.",
             "situation": "El combate continúa.",
             # Exploration
             "environmental_detail": location_desc or "la oscuridad es interrumpida por antorchas distantes",
             "sensory_detail": location_desc or "un aroma metálico llena el aire",
+            # npc_present/character_present en ctx para tests/debug — el filtro _ENRICHED_KEYS
+            # en _generate_narrative los excluye del override a NarrativeGenerator, entonces
+            # NarrativeGenerator usa sus datos ENRIQUECIDOS (con personality/secrets/voice).
             "character_present": npc_name,
             "npc_present": npc_name,
             "npc_or_character_present": npc_name,
@@ -1110,5 +1140,35 @@ class ActionRouter:
                     "moviéndose con una gracia fluida."
                 )
                 ctx["bystanders_react"] = "El enemigo prepara su contraataque."
+
+        # ── Agregar state completo al ctx para NarrativeGenerator ────────────────
+        # NarrativeGenerator._build_context necesita world, history, characters, npcs
+        # para construir contexto enriquecido. Se pasan aquí para que _generate_narrative
+        # los tenga disponibles al invocar ng.generate_scene.
+        if self.state:
+            ctx["world"] = self.state.get("world", {})
+            ctx["history"] = self.state.get("history", [])
+            ctx["characters"] = self.state.get("characters", {})
+            ctx["npcs"] = self.state.get("npcs", {})
+
+        # ── recent_events: últimas 3 entradas del history ─────────────────────────
+        # El LLM necesita saber qué pasó recently para narrar con coherencia.
+        history = ctx.get("history", [])
+        recent_entries = history[-3:] if history else []
+        recent_events = ". ".join(
+            h.get("event", "") for h in recent_entries if h.get("event")
+        ) or "La aventura comienza"
+        ctx["recent_events"] = recent_events
+
+        # ── character_details: backstory y secrets dinámicos del personaje ─────────
+        # El usuario puede setear backstory/secrets via comandos. El LLM los necesita.
+        if self.char:
+            char_details: dict = {}
+            if hasattr(self.char, "backstory") and self.char.backstory:
+                char_details["backstory"] = self.char.backstory
+            if hasattr(self.char, "secrets") and self.char.secrets:
+                char_details["secrets"] = self.char.secrets
+            if char_details:
+                ctx["character_details"] = char_details
 
         return ctx

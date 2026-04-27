@@ -92,7 +92,7 @@ def _get_narrative_generator() -> NarrativeGenerator:
     global _narrative_generator
     if _narrative_generator is None:
         try:
-            client = get_provider("minimax")
+            client = get_provider("gemini")
             _narrative_generator = NarrativeGenerator(llm_client=client)
         except Exception:
             log.warning("Failed to connect LLM client; falling back to template mode")

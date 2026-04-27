@@ -446,6 +446,7 @@ class NarrativeGenerator:
             if key in context or key in [
                 "location", "speaker", "defender", "attacker",
                 "npc_name", "damage", "dc", "roll", "skill_name",
+                "hit", "nat_20", "nat_1",  # dice resolution
             ]:
                 context[key] = value
 
@@ -1135,16 +1136,63 @@ Output: "{speaker} te mira fijamente. '¿Realmente querés saber la respuesta?'
 El silencio se extiende. Lo que digas ahora puede cambiar todo."
 """.format(location=location, npcs=npcs if npcs else "El grupo está solo.")
 
+        # ── Active quests para hilo conductor ───────────────────────────────────────
+        quests = state.get("quests", {}) if hasattr(state, "get") else {}
+        active_quests = quests.get("active", []) if isinstance(quests, dict) else []
+        if isinstance(active_quests, list):
+            quests_lines = []
+            for q in active_quests:
+                if isinstance(q, dict):
+                    qid = q.get("id", "")
+                    qdesc = q.get("description", "")
+                    quests_lines.append(f"  - {qid}: {qdesc}" if qdesc else f"  - {qid}")
+                else:
+                    quests_lines.append(f"  - {q}")
+            quests_str = "\n".join(quests_lines) if quests_lines else "  Ninguna activa"
+        else:
+            quests_str = "  Ninguna activa"
+
+        # ── Character backstory y secrets ──────────────────────────────────────────
+        char_details = context.get("character_details", {})
+        backstory_str = f"\nProtagonista: {char_details.get('backstory', 'Un aventurero')}" if char_details.get("backstory") else ""
+        secrets_str = f" | Secreto: {char_details['secrets']}" if char_details.get("secrets") else ""
+
+        # ── Dice resolution result ──────────────────────────────────────────
+        roll = context.get("roll", 0)
+        dc = context.get("dc", 12)
+        hit = context.get("hit", None)
+        nat_20 = context.get("nat_20", False)
+        nat_1 = context.get("nat_1", False)
+        damage = context.get("damage", 0)
+
+        if hit is not None:
+            if nat_20:
+                outcome = "CRÍTICO — el jugador tuvo un éxito extraordinario"
+            elif nat_1:
+                outcome = "FUMBLE — el jugador tuvo un fracaso catastrófico"
+            elif hit:
+                outcome = f"ACIERTO — el jugador superó la dificultad (tirada {roll} vs DC {dc})"
+            else:
+                outcome = f"FALLO — el jugador no superó la dificultad (tirada {roll} vs DC {dc})"
+            if damage:
+                outcome += f", inflictó {damage} de daño"
+            dice_result_block = f"**Resultado de la acción:** {outcome}\n"
+        else:
+            dice_result_block = ""
+
         user_prompt = (
             f"** HermesDM — Generador de escenas D&D 5e **\n\n"
             f"{constraints}\n"
             f"{few_shot}\n"
             f"**TU GENERACIÓN:**\n"
             f"Escena: {scene_type_str.upper()}\n"
+            f"{dice_result_block}"
             f"Ubicación: {location}\n"
             f"Personajes: {characters}\n"
             f"NPCs:\n{npcs}\n"
             f"Eventos recientes: {recent}\n"
+            f"Quests activas:\n{quests_str}\n"
+            f"Protagonista:{backstory_str}{secrets_str}\n"
             f"{milestone_section}\n"
             f"**Narrá la escena (2-4 oraciones, terminá en situación abierta, sin signos de pregunta):**\n"
         )
@@ -1159,7 +1207,7 @@ El silencio se extiende. Lo que digas ahora puede cambiar todo."
         result = self.llm_client.text(
             prompt=user_prompt,
             system=system,
-            max_tokens=256,
+            max_tokens=512,
             temperature=0.8,
         )
 

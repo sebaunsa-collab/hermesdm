@@ -255,12 +255,13 @@ def _generate_procedural_npcs(description: str, count: int = 3) -> list[dict]:
 def generate_setup_with_ai(description: str, tone: str = "serious", setting: str = "fantasy", pacing_level: str = "medium") -> dict:
     """
     Generate campaign setup (premise, hook, lore, factions, NPCs) using AI.
-    Falls back to build_world() templates if AI is unavailable.
+    NO fallbacks — si falta un campo requerido, lanza KeyError.
+    No hay fallback a build_world() ni a templates.
 
     Args:
         description: Free-text description from the DM
         tone: Narrative tone (dark, heroic, comedic, epic, serious)
-        setting: Setting type (fantasy, scifi, horror)
+        setting: Setting type (fantasy, scifi, horror) — se ignora si la AI detecta otro género
 
     Returns:
         dict with keys: premise, hook, tone, setting_type, lore (factions,
@@ -290,11 +291,17 @@ CRÍTICO — Reglas de oro:
    Ejemplo de input: "quiero una historia de jóvenes en un juego VR"
    → MAL: lugar = "Las Tierras de jóvenes", NPC = "juego"
    → BIEN: lugar = "La Cúpula de Cristal", NPC = "Rika, la mensajera digital"
-3. Detectá el género del input y usalo como setting:
-   - Si menciona: VR, realidad virtual, online, digital, IA, red, servidor, juego, MMORPG → setting = "scifi"
-   - Si menciona: magia, dragones, reinos, castillos → setting = "fantasy"
-   - Si menciona: zombis, apocalipsis, supervivencia → setting = "zombie"
-   - Si menciona: horror, oscuro, maldito → setting = "horror"
+3. Detectá el género del input y usalo como setting_type en la respuesta:
+   - Si menciona: VR, realidad virtual, online, digital, IA, red, servidor, juego, MMORPG, ciberseguridad → setting_type = "scifi"
+   - Si menciona: magia, dragones, reinos, castillos, espadas, fantasía → setting_type = "fantasy"
+   - Si menciona: zombis, apocalipsis, supervivencia, muerto viviente → setting_type = "zombie"
+   - Si menciona: horror, oscuro, maldito, terror → setting_type = "horror"
+   - Si menciona: piratas, corsarios, mares, navegación, barco → setting_type = "pirate"
+   - Si menciona: superhéroes, superhero, villano, capitans, justice, marvel, DC, спаситель → setting_type = "scifi"
+   - Si menciona: hombre lobo, licántropo, hombre lobo, licántropos → setting_type = "horror"
+   - Si menciona: vampiro, vampira, no-muerto, beber sangre → setting_type = "horror"
+   - Si menciona: western, vaquero, sheriff, saloon → setting_type = "fantasy"
+   - DEFAULT si none match → setting_type = "fantasy"
 
 IDEA DEL DM (solo para inspiración, NO para copiar):
 {description}
@@ -316,7 +323,7 @@ Generá una campaña COMPLETA en español. Cada campo debe ser original, creativ
 
 Respondé ÚNICAMENTE en JSON válido con este formato exacto:
 {{
-  "premise": "...",
+  "setting_type": "fantasy|scifi|horror|zombie|pirate",
   "hook": "...",
   "starting_location": "...",
   "starting_location_desc": "...",
@@ -353,11 +360,11 @@ No escribas nada más que el JSON."""
         parsed = json.loads(raw)
 
         # ── Layer 2: Echo detection ──────────────────────────────────────────
-        premise = parsed.get("premise", "")
+        premise = parsed["premise"]
         if _is_echo(description, premise):
             raise ValueError("AI echoed user description — triggering fallback")
 
-        # Extract classes from AI response or fallback to description extraction
+        # Extract classes from AI response — three-step generation (no silent fallback)
         classes = parsed.get("classes")
         if not classes:
             classes = extract_classes_from_text(description)
@@ -379,19 +386,19 @@ No escribas nada más que el JSON."""
         setup = {
             "description": description,
             "premise": premise,
-            "hook": parsed.get("hook", ""),
+            "hook": parsed["hook"],
             "tone": tone,
-            "setting_type": setting,
+            "setting_type": parsed["setting_type"],  # Requerido — error si falta
             "approved": False,
             "classes": classes,
             "lore": {
-                "factions": parsed.get("factions", {}),
-                "main_threat": parsed.get("main_threat", ""),
-                "starting_location": parsed.get("starting_location", ""),
-                "starting_location_desc": parsed.get("starting_location_desc", ""),
-                "npcs": parsed.get("npcs", []),
+                "factions": parsed["factions"],
+                "main_threat": parsed["main_threat"],
+                "starting_location": parsed["starting_location"],
+                "starting_location_desc": parsed["starting_location_desc"],
+                "npcs": parsed["npcs"],
             },
-            "starting_equipment": parsed.get("starting_equipment", []),
+            "starting_equipment": parsed["starting_equipment"],
             "story_arc": story_arc.to_dict(),
         }
 
@@ -415,6 +422,7 @@ No escribas nada más que el JSON."""
 
 Responde en JSON:
 {{
+  "setting_type": "fantasy|scifi|horror|zombie|pirate",
   "premise": "...",
   "hook": "...",
   "starting_location": "...",
@@ -442,8 +450,9 @@ Reglas:
                     raw = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
                 parsed = json.loads(raw)
 
-                premise = parsed.get("premise", "")
+                premise = parsed["premise"]
                 if not _is_echo(description, premise):
+                    # Three-step class generation (no silent fallback)
                     classes = parsed.get("classes")
                     if not classes:
                         classes = extract_classes_from_text(description)
@@ -464,25 +473,25 @@ Reglas:
                     setup = {
                         "description": description,
                         "premise": premise,
-                        "hook": parsed.get("hook", ""),
+                        "hook": parsed["hook"],
                         "tone": tone,
-                        "setting_type": setting,
+                        "setting_type": parsed["setting_type"],  # Requerido — error si falta
                         "approved": False,
                         "classes": classes,
                         "lore": {
-                            "factions": parsed.get("factions", {}),
-                            "main_threat": parsed.get("main_threat", ""),
-                            "starting_location": parsed.get("starting_location", ""),
-                            "starting_location_desc": parsed.get("starting_location_desc", ""),
-                            "npcs": parsed.get("npcs", []),
+                            "factions": parsed["factions"],
+                            "main_threat": parsed["main_threat"],
+                            "starting_location": parsed["starting_location"],
+                            "starting_location_desc": parsed["starting_location_desc"],
+                            "npcs": parsed["npcs"],
                         },
-                        "starting_equipment": parsed.get("starting_equipment", []),
+                        "starting_equipment": parsed["starting_equipment"],
                         "story_arc": story_arc.to_dict(),
                     }
                     setup = _sanitize_setup(setup, description)
                     return setup
         except Exception:
-            pass  # Fall through to template fallback
+            pass  # Fall through to error propagation
 
         # Layer 4: No template fallback — propagate the error so the user sees it
         raise RuntimeError(

@@ -1,18 +1,64 @@
 """
-Tests para SPEC-GENRE-FREE: genre validation eliminada.
+Tests para SPEC-GENRE-FREE: genre validation eliminada + no template fallback.
 
-Estos tests verifican que cualquier género inventado por el usuario
-funciona sin necesidad de keyword matching.
+Estos tests verifican:
+1. Cualquier género inventado por el usuario funciona sin error de género
+2. Cuando la AI falla, se muestra un error visible (no template genérico)
+3. El sistema no hace echo del input del usuario
 
 Cubre el fix del bug:
   "samurais en Japón feudal" → ValueError("Genre validation failed...")
 """
 import pytest
 from unittest import mock
+import json
+
+
+def _make_mock_response(premise):
+    """Genera un JSON mock de respuesta de AI que NO hace echo del input."""
+    data = {
+        "premise": premise,
+        "hook": "Un evento inesperado cambia todo.",
+        "starting_location": "Aldea Shimizu",
+        "starting_location_desc": "Pueblo entre montañas y ríos.",
+        "main_threat": "El Clan Sekigahara",
+        "factions": {"Clan Dragon": "DOMINANT"},
+        "npcs": [{"name": "Takeshi", "role": "Mercader", "dialogue": "El camino es largo."}],
+        "classes": ["Guerrero", "Monje", "Explorador"],
+        "starting_equipment": [{"name": "Katana", "description": "Espada curva tradicional.", "is_consumable": False}],
+        "story_arc": {
+            "pacing_level": "medium",
+            "milestones": [
+                {"id": "hook", "type": "hook", "description": "Los personajes se conocen cuando una delegación llega a la aldea buscando guerreros capaces."}
+            ]
+        }
+    }
+    return json.dumps(data)
+
+
+def _make_gemini_http_mock(premise):
+    """Crea un context manager que mockea urlopen para devolver una respuesta Gemini válida."""
+    mock_response = _make_mock_response(premise)
+    mock_body = json.dumps({
+        "candidates": [{"content": {"parts": [{"text": mock_response}]}}],
+        "usageMetadata": {"totalTokenCount": 100}
+    }).encode("utf-8")
+
+    mock_http_response = mock.MagicMock()
+    mock_http_response.read.return_value = mock_body
+    mock_http_response.__enter__ = mock.MagicMock(return_value=mock_http_response)
+    mock_http_response.__exit__ = mock.MagicMock(return_value=False)
+
+    return mock.MagicMock(return_value=mock_http_response)
 
 
 class TestGenreFreeGeneration:
-    """El sistema debe funcionar con cualquier género sin validar keywords."""
+    """El sistema debe funcionar con cualquier género inventado sin validar keywords."""
+
+    def _fake_getenv(self, key, default=None):
+        if key == "GEMINI_API_KEY":
+            return "fake_gemini_key_for_testing"
+        return default or ""
 
     def test_samurai_input_does_not_raise_genre_error(self):
         """
@@ -20,35 +66,28 @@ class TestGenreFreeGeneration:
         fallaba con: ValueError("Genre validation failed for 'fantasy': ...")
 
         Después del fix: debe retornar setup válido, sin error de genre.
+        El mock usa premise que NO hace echo del input.
         """
-        with mock.patch("os.getenv", return_value="fake_key"):
-            with mock.patch("dm.provider_client.MiniMaxProvider") as MockProvider:
-                mock_instance = mock.MagicMock()
-                mock_instance.text.return_value = mock.MagicMock(
-                    text='{"premise": "En el Japón feudal, samuráis buscan venganza...", "hook": "...", "starting_location": "Castillo Himeji", "starting_location_desc": "...", "main_threat": "El Shogun traidor", "factions": {"Clan Oni": "DOMINANT"}, "npcs": [{"name": "Kira", "role": "Ronin", "dialogue": "Lakatoshi..."}], "classes": ["Samurai", "Monje", "Ashigaru"], "starting_equipment": [{"name": "Katana", "description": "Espada curva", "is_consumable": false}], "story_arc": {"pacing_level": "medium", "milestones": [{"id": "hook", "type": "hook", "description": "Los samuráis descubren la traición del Shogun y deben huir del Castillo Himeji..."}]}}'
-                )
-                MockProvider.return_value = mock_instance
-
-                # Import here to avoid stale cache
+        mock_urlopen = _make_gemini_http_mock(
+            "Tradición y acero se entrelazan en una era de profunda desigualdad."
+        )
+        with mock.patch("urllib.request.urlopen", mock_urlopen):
+            with mock.patch("os.getenv", self._fake_getenv):
                 from dm.world_builder import generate_setup_with_ai
                 result = generate_setup_with_ai("samurais en el Japón feudal")
 
-                # Should NOT raise ValueError("Genre validation failed...")
                 assert result is not None
                 assert "premise" in result
                 assert "lore" in result
                 assert "hook" in result
 
     def test_werewolf_input_does_not_raise_genre_error(self):
-        """Hombres lobo no estaban en keywords — ahora debe funcionar."""
-        with mock.patch("os.getenv", return_value="fake_key"):
-            with mock.patch("dm.provider_client.MiniMaxProvider") as MockProvider:
-                mock_instance = mock.MagicMock()
-                mock_instance.text.return_value = mock.MagicMock(
-                    text='{"premise": "En Transilvania, los licántropos atacan...", "hook": "...", "starting_location": "Pueblo de Braila", "starting_location_desc": "...", "main_threat": "La manada de hombres lobo", "factions": {"Cazadores": "RISING"}, "npcs": [{"name": "Dracu", "role": "Cazador", "dialogue": "Solo la plata puede detenerlos..."}], "classes": ["Licántropo", "Cazador", "Brujo"], "starting_equipment": [{"name": "Daga de plata", "description": "Arma contra licántropos", "is_consumable": false}], "story_arc": {"pacing_level": "medium", "milestones": [{"id": "hook", "type": "hook", "description": "Los hombres lobo atacan el pueblo..."}]}}'
-                )
-                MockProvider.return_value = mock_instance
-
+        """Hombres lobo no estaban en keywords — ahora debe funcionar sin error."""
+        mock_urlopen = _make_gemini_http_mock(
+            "Las noches sin luna traen terrores que la gente del pueblo prefiere no nombrar."
+        )
+        with mock.patch("urllib.request.urlopen", mock_urlopen):
+            with mock.patch("os.getenv", self._fake_getenv):
                 from dm.world_builder import generate_setup_with_ai
                 result = generate_setup_with_ai("hombres lobo en Transilvania")
 
@@ -56,15 +95,12 @@ class TestGenreFreeGeneration:
                 assert "premise" in result
 
     def test_pirates_input_does_not_raise_genre_error(self):
-        """Piratas funcionaban por luck (codigo estaba en keywords), pero el fix los mejora."""
-        with mock.patch("os.getenv", return_value="fake_key"):
-            with mock.patch("dm.provider_client.MiniMaxProvider") as MockProvider:
-                mock_instance = mock.MagicMock()
-                mock_instance.text.return_value = mock.MagicMock(
-                    text='{"premise": "Corsarios del Mar del Diablo buscan el tesoro maldito...", "hook": "...", "starting_location": "Isla Tortuga", "starting_location_desc": "...", "main_threat": "La Flota del Almirante Negro", "factions": {"Hermandad de la Costa": "DOMINANT"}, "npcs": [{"name": "Barbarroja", "role": "Capitán pirata", "dialogue": "El tesoro es mío..."}], "classes": ["Pirata", "Navegante", "Espadachín"], "starting_equipment": [{"name": "Espada pirate", "description": "Sable curveado", "is_consumable": false}], "story_arc": {"pacing_level": "medium", "milestones": [{"id": "hook", "type": "hook", "description": "Los piratas descubren el mapa del tesoro..."}]}}'
-                )
-                MockProvider.return_value = mock_instance
-
+        """Piratas funcionaban por luck (código estaba en keywords), pero el fix los mejora."""
+        mock_urlopen = _make_gemini_http_mock(
+            "Olas gigantes y mercados negros son el hogar de los que no tienen rey."
+        )
+        with mock.patch("urllib.request.urlopen", mock_urlopen):
+            with mock.patch("os.getenv", self._fake_getenv):
                 from dm.world_builder import generate_setup_with_ai
                 result = generate_setup_with_ai("piratas buscando tesoro en el caribe")
 
@@ -72,15 +108,12 @@ class TestGenreFreeGeneration:
                 assert "premise" in result
 
     def test_custom_genre_invented_by_user(self):
-        """Género inventado debe funcionar sin error."""
-        with mock.patch("os.getenv", return_value="fake_key"):
-            with mock.patch("dm.provider_client.MiniMaxProvider") as MockProvider:
-                mock_instance = mock.MagicMock()
-                mock_instance.text.return_value = mock.MagicMock(
-                    text='{"premise": "Espías victorianos en el Londres de 1888...", "hook": "...", "starting_location": "Baker Street", "starting_location_desc": "...", "main_threat": "El Espía del Imperio", "factions": {"MI6": "RISING"}, "npcs": [{"name": "M", "role": "Jefe de espías", "dialogue": "El juego comienza..."}], "classes": ["Espía", "Detective", "Noble"], "starting_equipment": [{"name": "Pistola de duelo", "description": "Sencilla y letal", "is_consumable": false}], "story_arc": {"pacing_level": "medium", "milestones": [{"id": "hook", "type": "hook", "description": "Los espías descubren la conspiración..."}]}}'
-                )
-                MockProvider.return_value = mock_instance
-
+        """Género inventado debe funcionar sin error — sin keywords, sin genre validation."""
+        mock_urlopen = _make_gemini_http_mock(
+            "Entre el humo de las fábricas, una red de informantes cambia de bando."
+        )
+        with mock.patch("urllib.request.urlopen", mock_urlopen):
+            with mock.patch("os.getenv", self._fake_getenv):
                 from dm.world_builder import generate_setup_with_ai
                 result = generate_setup_with_ai("espías victorianos en el Londres de Jack el Destripador")
 
@@ -88,36 +121,44 @@ class TestGenreFreeGeneration:
                 assert "premise" in result
 
     def test_ninja_input_does_not_raise_genre_error(self):
-        """Ninjas tampoco estaban en keywords — ahora debe funcionar."""
-        with mock.patch("os.getenv", return_value="fake_key"):
-            with mock.patch("dm.provider_client.MiniMaxProvider") as MockProvider:
-                mock_instance = mock.MagicMock()
-                mock_instance.text.return_value = mock.MagicMock(
-                    text='{"premise": "Ninjas del Clan Kaguya ejecutan misiones de espionaje...", "hook": "...", "starting_location": "Aldea Konoha", "starting_location_desc": "...", "main_threat": "El Clan Otomo", "factions": {"Clan Kaguya": "DOMINANT"}, "npcs": [{"name": "Hidan", "role": "Ninja asesino", "dialogue": "No sientes dolor..."}], "classes": ["Ninja", "Samurai", "Monje"], "starting_equipment": [{"name": "Shuriken", "description": "Estrella arrojadiza", "is_consumable": true}], "story_arc": {"pacing_level": "medium", "milestones": [{"id": "hook", "type": "hook", "description": "Los ninjas reciben su primera misión..."}]}}'
-                )
-                MockProvider.return_value = mock_instance
-
+        """Ninjas tampoco estaban en keywords — ahora debe funcionar sin error."""
+        mock_urlopen = _make_gemini_http_mock(
+            "Sombras y disciplina: el camino del guerrador silencioso."
+        )
+        with mock.patch("urllib.request.urlopen", mock_urlopen):
+            with mock.patch("os.getenv", self._fake_getenv):
                 from dm.world_builder import generate_setup_with_ai
                 result = generate_setup_with_ai("ninja clan en el Japón feudal")
 
                 assert result is not None
                 assert "premise" in result
 
-    def test_samurai_fallback_also_works(self):
+    def test_ai_failure_shows_error_instead_of_template(self):
         """
-        Cuando la API está down, el fallback genera contenido genérico.
-        No debe fallar con genre validation error aunque el fallback
-        genere contenido que no tiene keywords de fantasy.
-        """
-        with mock.patch("os.getenv", return_value="fake_key"):
-            with mock.patch("dm.provider_client.MiniMaxProvider") as MockProvider:
-                # API down
-                MockProvider.side_effect = Exception("API down")
+        Cuando la API está down, el sistema debe mostrar un error visible
+        (RuntimeError), NO un template genérico de fantasy.
 
+        Este es el comportamiento correcto: error visible > template falso.
+        """
+        import urllib.error
+
+        class FakeHTTPError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__(
+                    "https://generativelanguage.googleapis.com/",
+                    400,
+                    "Bad Request",
+                    {},
+                    None,
+                )
+
+        def raise_urlopen(*args, **kwargs):
+            raise FakeHTTPError()
+
+        with mock.patch("urllib.request.urlopen", side_effect=raise_urlopen):
+            with mock.patch("os.getenv", self._fake_getenv):
                 from dm.world_builder import generate_setup_with_ai
-                result = generate_setup_with_ai("samurais en el Japón feudal")
+                with pytest.raises(RuntimeError) as exc_info:
+                    generate_setup_with_ai("samurais en el Japón feudal")
 
-                # Should NOT raise ValueError("Genre validation failed...")
-                assert result is not None
-                assert "premise" in result
-                # Fallback genera algo — puede ser genérico, pero no crashea
+                assert "samurais en el Japón feudal" in str(exc_info.value)

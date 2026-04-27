@@ -227,6 +227,101 @@ class MiniMaxProvider(LLMClient):
             pass
 
 
+# ── Gemini Provider ──────────────────────────────────────────────────────────
+
+class GeminiProvider(LLMClient):
+    """
+    Google Gemini provider via the REST API.
+
+    Requires GEMINI_API_KEY env var.
+    Model: gemini-2.0-flash (default).
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "gemini-2.5-flash",
+    ) -> None:
+        import os
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.model = model
+
+    def text(
+        self,
+        prompt: str,
+        system: str | None = None,
+        max_tokens: int = 256,
+        temperature: float = 0.8,
+    ) -> LLMResponse:
+        import json
+        import time
+        import urllib.request
+        import urllib.error
+
+        start_ts = time.perf_counter()
+
+        # Build contents: user prompt only (system instruction goes in systemInstruction)
+        contents = [
+            {"role": "user", "parts": [{"text": prompt}]},
+        ]
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": temperature,
+            },
+        }
+
+        # Gemini uses systemInstruction for system prompts, not a role in contents
+        if system:
+            payload["systemInstruction"] = {
+                "role": "user",
+                "parts": [{"text": system}],
+            }
+
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}"
+            f":generateContent?key={self.api_key}"
+        )
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.load(resp)
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Gemini API error {exc.code}: {error_body[:500]}"
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(f"Gemini request failed: {exc}") from exc
+
+        latency_ms = (time.perf_counter() - start_ts) * 1000
+
+        try:
+            content = result["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError):
+            raise RuntimeError(f"Unexpected Gemini response structure: {result}")
+
+        usage = result.get("usageMetadata", {})
+
+        return LLMResponse(
+            text=content,
+            raw=result,
+            model=self.model,
+            usage=usage,
+            latency_ms=latency_ms,
+        )
+
+
 # ── Provider factory ─────────────────────────────────────────────────────────
 
 def get_provider(name: str, **kwargs) -> LLMClient:

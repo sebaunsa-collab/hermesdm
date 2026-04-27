@@ -698,7 +698,10 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             cs.setup_mode = False
             chat_data["_hermes_state"] = cs
             await gen_msg.edit_text(
-                f"⚠️ No pude conectar con AI. Usando template.\n`{ai_err}`",
+                f"⚠️ Error en generación de setup.\n\n"
+                f"Descripción: {description}\n"
+                f"Error: {ai_err}\n\n"
+                f"Revisá la API key y volvé a intentar con /setup.",
                 parse_mode=ParseMode.MARKDOWN,
             )
 

@@ -38,6 +38,7 @@ def test_is_echo_empty_description():
 
 # ── F6: Fallback path must NOT concatenate raw description into premise ──
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_no_concatenation():
     """F6: fallback must not paste description into premise."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -52,6 +53,7 @@ def test_fallback_no_concatenation():
             assert "Los personajes son aventureros comprometidos con una misión peligrosa:" not in premise
 
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_generates_original_premise_from_nouns():
     """F6: fallback builds premise from extracted nouns, not raw text."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -66,6 +68,7 @@ def test_fallback_generates_original_premise_from_nouns():
 
 # ── F2: Location must NOT be generic ──
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_location_not_generic_when_keywords_match():
     """F2: location must not be the hardcoded fallback when keywords match."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -75,6 +78,7 @@ def test_fallback_location_not_generic_when_keywords_match():
             assert result["lore"]["starting_location"] != "un lugar olvidado"
 
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_location_uses_procedural_name_for_unmatched():
     """F2: when no keyword matches, uses procedural name from nouns."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -88,6 +92,7 @@ def test_fallback_location_uses_procedural_name_for_unmatched():
 
 # ── F3: Hook must reference threat and location ──
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_hook_references_threat_and_location():
     """F3: hook references main_threat and starting_location."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -145,6 +150,7 @@ def test_procedural_npcs_from_description():
 
 # ── F5: Tone detection ──
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_detects_dark_tone():
     """F5: dark tone keywords detected."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -154,6 +160,7 @@ def test_fallback_detects_dark_tone():
             assert result["tone"] == "dark"
 
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_detects_epic_tone():
     """F5: epic tone keywords detected."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -163,6 +170,7 @@ def test_fallback_detects_epic_tone():
             assert result["tone"] == "epic"
 
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_fallback_detects_comedic_tone():
     """F5: comedic tone keywords detected."""
     with mock.patch("os.getenv", return_value="fake_key"):
@@ -190,6 +198,7 @@ def test_is_echo_high_overlap_detected():
 
 # ── Integration: full fallback flow ──
 
+@pytest.mark.skip(reason="template fallback removed - now raises error instead")
 def test_full_fallback_flow_structure():
     """Integration: fallback produces complete, valid structure."""
     with mock.patch("os.getenv", return_value="fake_key"):

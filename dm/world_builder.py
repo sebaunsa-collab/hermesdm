@@ -272,15 +272,15 @@ def generate_setup_with_ai(description: str, tone: str = "serious", setting: str
     # Extraer clases del texto antes de generar
     extract_classes_from_text(description)
 
-    # ── Layer 1: AI generation with hardened prompt ──────────────────────────
+    # ── Layer 1: AI generation with Gemini ─────────────────────────────────────
     try:
-        api_key = os.getenv("OPENROUTER_API_KEY", "") or os.getenv("MINIMAX_API_KEY", "")
+        api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
-            raise ValueError("No API key set (OPENROUTER_API_KEY or MINIMAX_API_KEY)")
+            raise ValueError("No GEMINI_API_KEY set")
 
-        from dm.provider_client import MiniMaxProvider
+        from dm.provider_client import GeminiProvider
 
-        provider = MiniMaxProvider(api_key=api_key)
+        provider = GeminiProvider(api_key=api_key)
 
         prompt = f"""Eres un DM creativo de D&D 5e con 20 años de experiencia.
 
@@ -406,10 +406,10 @@ No escribas nada más que el JSON."""
     except Exception as ai_err:
         # ── Layer 3: Second-chance AI call with simplified prompt ───────────
         try:
-            api_key = os.getenv("OPENROUTER_API_KEY", "") or os.getenv("MINIMAX_API_KEY", "")
+            api_key = os.getenv("GEMINI_API_KEY", "")
             if api_key:
-                from dm.provider_client import MiniMaxProvider
-                provider = MiniMaxProvider(api_key=api_key)
+                from dm.provider_client import GeminiProvider
+                provider = GeminiProvider(api_key=api_key)
 
                 fallback_prompt = f"""Crea una campaña de D&D 5e basada en esta idea: {description}
 
@@ -484,116 +484,11 @@ Reglas:
         except Exception:
             pass  # Fall through to template fallback
 
-        # ── Layer 4: Template-based fallback (never concatenates raw description) ──
-        import warnings
-        import re
-        warnings.warn(f"AI setup generation failed ({ai_err}), falling back to templates")
-
-        desc_lower = description.lower()
-
-        # Extract key nouns from description for procedural generation
-        key_nouns = re.findall(r'\b[A-Z][a-z]+\b', description)
-        if not key_nouns:
-            words = re.findall(r'\b\w+\b', description)
-            stop_words = {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
-                          "y", "o", "pero", "si", "no", "con", "por", "para", "en", "a", "que",
-                          "es", "son", "quiero", "historia", "con", "las", "siguientes",
-                          "clases", "seria", "oscura", "gremio", "clase"}
-            key_nouns = [w for w in words if w.lower() not in stop_words and len(w) > 3]
-
-        # Extract threat/antagonist hints
-        threat = ""
-        threat_patterns = [
-            r"rey demonio", r"rey humano", r"dragón", r"demon[io]", r"villano",
-            r"corrupto", r"tirano", r"malvado", r"amenaza", r"dr.?king", r"demon.?king",
-            r"zombie[s]?", r"no[-]?muerto[s]?", r"infestación", r"plaga",
-            r"ninja[s]?", r"clan oculto", r"asesino[s]?",
-        ]
-        for pat in threat_patterns:
-            m = re.search(pat, desc_lower)
-            if m:
-                threat = m.group(0).capitalize()
-                break
-
-        # Detect location from description (procedural, not keyword-mapped)
-        location = ""
-        location_keywords = {
-            "ciudad": "Ciudad amurallada", "puerto": "Puerto de las Sombras",
-            "reino": "Reino de los Caidos", "palacio": "Palacio de los Lamentos",
-            "castillo": "Castillo de las Ruinas", "bosque": "Bosque de los Susurros",
-            "selva": "Selva de las Sombras", "montaña": "Montañas del Olvido",
-            "cueva": "Cavernas del Eco", "mazmorra": "Mazmorras del Silencio",
-            "mar": "Mar de la Niebla", "nave": "Nave Abandonada",
-        }
-        for kw, loc in location_keywords.items():
-            if kw in desc_lower:
-                location = loc
-                break
-        if not location:
-            location = "un lugar olvidado"
-
-        # Detect tone
-        detected_tone = tone
-        if any(w in desc_lower for w in ["oscuro", "oscura", "dark", "sombrio", "sombria", "macabro", "macabra"]):
-            detected_tone = "dark"
-        elif any(w in desc_lower for w in ["épico", "épica", "heroico", "heroica", "legendario", "legendaria"]):
-            detected_tone = "epic"
-        elif any(w in desc_lower for w in ["serio", "seria", "dramático", "dramática", "trágico", "trágica"]):
-            detected_tone = "serious"
-        elif any(w in desc_lower for w in ["comico", "comica", "gracioso", "graciosa", "parodia", "divertido", "divertida"]):
-            detected_tone = "comedic"
-
-        # Build premise — never uses raw description keywords
-        premise = (
-            "En las sombras de un reino fracturado, un grupo de desconocidos "
-            "se ve arrastrado a una conspiración que desafía todo lo que creen saber. "
-            "Cada elección tiene un precio, y el tiempo se agota."
-        )
-
-        # Build hook referencing threat and location
-        hook = (
-            f"La amenaza de {threat or 'una fuerza desconocida'} se cierne sobre el horizonte. "
-            f"Una revelación terrible sacude las bases del poder. "
-            f"Quienes no actúen pronto serán consumidos por la oscuridad que se avecina."
-        )
-
-        # Generate themed content for fallback
-        fallback_classes = _generate_themed_classes(setting, description)
-        fallback_npcs = _generate_themed_npcs(setting, description)
-        # If no themed NPCs matched, use procedural generation
-        if fallback_npcs == [
-            {"name": "Erna", "role": "Tabernera con oídos atentos", "dialogue": "La cerveza está fría y los rumores calientes."},
-            {"name": "Vorn", "role": "Capitán de la guardia", "dialogue": "Órdenes son órdenes. Preguntame después."},
-            {"name": "Mira", "role": "Erudita de biblioteca", "dialogue": "El conocimiento es poder. El poder corrompe. Hacé las cuentas."},
-        ]:
-            fallback_npcs = _generate_procedural_npcs(description, count=3)
-
-        fallback_items = _generate_themed_items(setting, description)
-
-        fallback = build_world(setting)
-        factions = fallback["world"].get("factions", {})
-
-        from dm.story_arc import create_default_story_arc
-        fallback_arc = create_default_story_arc(pacing_level)
-
-        return {
-            "description": description,
-            "premise": premise,
-            "hook": hook,
-            "tone": detected_tone,
-            "setting_type": setting,
-            "approved": False,
-            "classes": fallback_classes,
-            "lore": {
-                "factions": factions,
-                "main_threat": threat or fallback["world"].get("main_threat", "Una amenaza se cierne sobre el mundo."),
-                "starting_location": location,
-                "starting_location_desc": f"{location} — un lugar donde el conflicto entre {threat or 'fuerzas oscuras'} y la esperanza está a punto de estallar.",
-                "npcs": fallback_npcs,
-            },
-            "starting_equipment": fallback_items,
-            "story_arc": fallback_arc.to_dict(),
-        }
+        # Layer 4: No template fallback — propagate the error so the user sees it
+        raise RuntimeError(
+            f"La generación de setup falló.Descripción: '{description}'. "
+            f"Error: {ai_err}"
+        ) from ai_err
 
 
 

@@ -49,6 +49,40 @@ class SceneType(str, Enum):
     STORY_BEAT = "STORY_BEAT"
     REST = "REST"
 
+# ── Dice Selectivity: When to Roll ────────────────────────────────────────
+
+ROLL_TRIGGERS = {
+    "athletics": ["climbing", "swimming", "jumping", "forced march", "wrestling", "escalando", "nadando", "saltando"],
+    "persuasion": ["hostile", "secret", "risk", "time pressure", "bribe", "complex request", "hostil", "secreto", "soborno"],
+    "deception": ["suspicious", "trained", "prior knowledge", "important lie", "sospechoso", "mentira"],
+    "intimidation": ["loyalty", "brave", "wise", "resisting", "lealtad", "valiente", "resistir"],
+    "investigation": ["hidden", "trap", "secret door", "time limit", "searching for clues", "oculto", "trampa", "puerta secreta", "pista"],
+    "perception": ["hidden", "subtle", "disguised", "ambush", "noise", "distracted", "emboscada", "ruido", "distraido"],
+    "stealth": ["enemy", "guard", "detection", "sneaking past", "hiding", "enemigo", "guardia", "sigilo"],
+    "arcana": ["obscure", "arcane", "magical trap", "magical secret", "oscuro", "arcano", "trampa magica"],
+    "history": ["obscure", "ancient", "historical secret", "oscuro", "antiguo", "historico"],
+    "religion": ["obscure", "divine", "religious secret", "ritual", "divino", "religioso"],
+    "acrobatics": ["escape", "bond", "difficult terrain", "falling", "escapar", "terreno dificil", "cayendo"],
+    "medicine": ["stabilize", "diagnose", "poisoned", "disease", "estabilizar", "diagnosticar", "envenenado", "herida grave"],
+}
+
+AUTO_SUCCESS_ACTIONS = [
+    "walk", "corro", "run", "stand", "sit", "kneel", "kneeling",
+    "open door", "close door", "pick up", "drink", "eat",
+    "draw weapon", "sheathe weapon", "light torch", "look",
+    "talk", "speak", "convers", "chat", "ask about",
+    "climb stairs", "stairs", "rest", "sleep", "meditate",
+    "stretch", "yawn", "breathe", "wait", "watch",
+    "nod", "smile", "wave", "point", "examine",
+    "camino", "muevo", "voy a", "entro a", "paso por",
+    "abro la puerta", "abro puerta", "cierro la puerta",
+    "reviso", "miro", "observo", "exploro", "busco",
+    "hablo con", "converso", "pregunto", "saludo",
+    "me siento", "me levanto", "me paro", "descanso",
+    "suspiro", "respiro", "pienso", "reflexiono",
+    "me estiro", "bostezo", "espero", "me quedo",
+]
+
 
 @dataclass
 class ActionIntent:
@@ -56,6 +90,9 @@ class ActionIntent:
     action_type: str  # "attack", "skill", "dialogue", "cast", "rest", "explore"
     target: str | None
     params: dict = field(default_factory=dict)
+    requires_roll: bool = True
+    roll_reason: Optional[str] = None
+    action_description: str = ""
 
 
 @dataclass
@@ -69,16 +106,21 @@ class ActionResolution:
     kill: bool = False
     roll: int | None = None
     dc: int | None = None
+    roll_obj: None = None
     mechanic_inline: str = ""
     attack_roll: int = 0  # total including mods
+    narrative: str = ""
 
 
 @dataclass
 class ActionResult:
     """Resultado final del router: narración + mecánica + imagen."""
     narrative: str
-    mechanic_inline: str
+    mechanic_inline: str | None = None
     action_type: str = ""
+    damage: int | None = None  # Damage dealt (for attack actions)
+    target: str | None = None  # Target name (for attack actions)
+    kill: bool = False  # Whether the attack killed the target
     nat_20: bool = False
     nat_1: bool = False
     image_path: str | None = None  # Local path to generated image (if any)
@@ -93,6 +135,7 @@ def _generate_narrative(
     context: dict,
     milestone_context: dict | None = None,
     state: dict | None = None,
+    scene_decision: SceneDecision | None = None,
 ) -> str:
     """
     Genera narración via NarrativeGenerator (template o LLM).
@@ -129,6 +172,14 @@ def _generate_narrative(
         ng_overrides = {k: v for k, v in context.items() if k not in _ENRICHED_KEYS}
 
         ng = NarrativeGenerator(llm_client=get_provider("gemini"))
+        # ── Scene Director integration ──────────────────────────────────
+        if scene_decision:
+            ng_overrides["narrative_instruction"] = scene_decision.narrative_instruction
+            ng_overrides["enemies"] = scene_decision.enemies
+            ng_overrides["active_npc"] = scene_decision.active_npc
+            ng_overrides["mechanical_setup"] = scene_decision.mechanical_setup
+            ng_overrides["world_changes"] = scene_decision.world_changes
+
         result = ng.generate_scene(
             state=game_state,
             scene_type=scene_type,
@@ -137,28 +188,9 @@ def _generate_narrative(
             milestone_context=milestone_context,
         )
         return result.get("narrative", "La escena continúa...")
-    except Exception:
-        # Fallback: usar templates inline simples
-        return _fallback_narrative(scene_type, context)
-
-
-def _fallback_narrative(scene_type: SceneType, ctx: dict) -> str:
-    """Fallback simple si NarrativeGenerator falla."""
-    attacker = ctx.get("attacker", "El personaje")
-    defender = ctx.get("defender", "el objetivo")
-    location = ctx.get("location", "el dungeon")
-    situation = ctx.get("situation", "La historia continúa.")
-
-    if scene_type == SceneType.COMBAT:
-        return f"El acero corta el aire cuando {attacker} ataca a {defender}. {situation}"
-    elif scene_type == SceneType.DIALOGUE:
-        return f"{attacker} se dirige a {defender}. {situation}"
-    elif scene_type == SceneType.STORY_BEAT:
-        return f"Un momento clave: {attacker} toma una decisión crucial. {situation}"
-    elif scene_type == SceneType.REST:
-        return f"{attacker} descansa en {location}. La calma es breve."
-    else:
-        return f"{attacker} actúa en {location}. {situation}"
+    except Exception as e:
+        # No fallback — let the error propagate
+        raise
 
 
 # ------------------------------------------------------------------#
@@ -202,15 +234,57 @@ class ActionRouter:
         """
         intent = self._parse(action_text)
 
+        # ── P1: Combat Gate ──────────────────────────────────────────────
+        if intent.action_type == "attack":
+            # Only gate when combat state explicitly exists in state (backward compat)
+            if "combat" in self.state and self.state["combat"].get("active", False) is False:
+                return ActionResult(
+                    narrative="⛔ No estás en combate. No podés atacar a nadie.",
+                    mechanic_inline=None,
+                    action_type="blocked",
+                )
+            if "combat" in self.state and not self._validate_combat_target(intent.target):
+                target_name = intent.target or "ese objetivo"
+                return ActionResult(
+                    narrative=f"⛔ No hay '{target_name}' en esta escena para atacar.",
+                    mechanic_inline=None,
+                    action_type="blocked",
+                )
+
+        # ── P2: Location Graph Travel Gate ──────────────────────────────
+        travel_blocked = self._validate_travel(intent, action_text)
+        if travel_blocked:
+            return ActionResult(
+                narrative=travel_blocked,
+                mechanic_inline=None,
+                action_type="blocked",
+            )
+
         resolution = self._resolve(intent)
         scene_type = scene_type_override or self._classify(intent, resolution)
         ctx = self._build_context(intent, resolution, scene_type, action_text)
-        narrative = _generate_narrative(scene_type, ctx, milestone_context, state=self.state)
+
+        # ── Scene Director integration ────────────────────────────────────
+        scene_decision = None
+        if self.state.get("use_scene_director", True):
+            try:
+                director = SceneDirector(self.state)
+                scene_decision = director.decide(self.state, resolution)
+            except Exception:
+                pass  # Fall through to normal flow
+
+        narrative = _generate_narrative(
+            scene_type, ctx, milestone_context, state=self.state,
+            scene_decision=scene_decision,
+        )
 
         return ActionResult(
             narrative=narrative,
             mechanic_inline=resolution.mechanic_inline,
             action_type=intent.action_type,
+            damage=resolution.damage if intent.action_type in ("attack", "cast") else None,
+            target=intent.target,
+            kill=getattr(resolution, "kill", False),
             nat_20=resolution.nat_20,
             nat_1=resolution.nat_1,
             image_path=None,  # Image generation handled in telegram_handler
@@ -379,10 +453,126 @@ class ActionRouter:
             target = self._extract_object_target(text)
         elif any(kw in text for kw in dialogue_kw):
             action_type = "dialogue"
+            target = self._extract_dialogue_target(text)
         elif any(kw in text for kw in rest_kw):
             action_type = "rest"
 
-        return ActionIntent(action_type=action_type, target=target, params=params)
+        # ── Determine if this action needs a dice roll ────────────────────
+        ctx = {}  # Minimal context for roll determination
+        requires_roll, roll_reason = self._determine_roll_need(action_type, text, ctx)
+
+        return ActionIntent(action_type=action_type, action_description=action_text, target=target, params=params, requires_roll=requires_roll, roll_reason=roll_reason)
+
+
+
+    def _is_auto_success(self, action_type: str, action_text: str, context: dict = None) -> bool:
+        """DM-style decision: is this action trivially accomplished? Returns True if no dice roll is needed."""
+        context = context or {}
+        text_lower = action_text.lower()
+
+        # Environmental automatics
+        if any(phrase in text_lower for phrase in AUTO_SUCCESS_ACTIONS):
+            if context.get("enemies_present") or context.get("in_combat"):
+                return False
+            if context.get("npc_attitude") == "hostile":
+                return False
+            if context.get("is_trapped") or context.get("has_hidden_content"):
+                return False
+            return True
+
+        # Explore actions are auto-success
+        if action_type == "explore":
+            if context.get("enemies_present") or context.get("in_combat"):
+                return False
+            return True
+
+        # Skill-specific auto-success checks
+        if action_type == "skill" and context.get("npc_attitude") == "friendly":
+            if not self._has_stakes(action_text):
+                return True
+
+        if action_type == "skill" and context.get("skill_name") == "investigation":
+            if not context.get("has_hidden_content") and not context.get("is_trapped"):
+                return True
+
+        if action_type == "skill" and context.get("skill_name") == "perception":
+            if not context.get("is_hidden") and not context.get("has_distraction"):
+                return True
+
+        if action_type == "skill" and context.get("skill_name") == "stealth":
+            if not context.get("enemies_present"):
+                return True
+
+        if action_type == "dialogue":
+            if context.get("npc_attitude") != "hostile":
+                return True
+
+        return False
+
+    def _has_stakes(self, action_text: str) -> bool:
+        """Check if the action involves meaningful stakes."""
+        stakes_keywords = ["risk", "danger", "secret", "betray", "lie", "threat",
+                          "riesgo", "peligro", "secreto", "traicion", "mentira", "amenaza"]
+        text_lower = action_text.lower()
+        return any(kw in text_lower for kw in stakes_keywords)
+
+    def _determine_roll_need(self, action_type: str, action_text: str, context: dict = None) -> tuple:
+        """DM-style decision: does this action need a roll? Returns (requires_roll: bool, reason: str | None)"""
+        context = context or {}
+
+        combat_types = ["attack", "cast", "shove", "disengage", "dodge", "help", "dash", "ready"]
+        if action_type in combat_types:
+            return (True, "combat action")
+
+        if action_type in ROLL_TRIGGERS:
+            triggers = ROLL_TRIGGERS[action_type]
+            text_lower = action_text.lower()
+            for trigger in triggers:
+                if trigger in text_lower:
+                    return (True, "%s: '%s' trigger detected" % (action_type, trigger))
+
+        if self._is_auto_success(action_type, action_text, context):
+            return (False, None)
+
+        if action_type in ("explore", "dialogue", "rest", "generic"):
+            return (False, None)
+
+        return (True, "%s action" % action_type)
+
+    def _generate_auto_success_narrative(self, intent) -> str:
+        """Generate vivid narrative for auto-success actions. No dice language."""
+        action = intent.action_description
+        if hasattr(self, "char_name"):
+            char_name = getattr(self, "char_name", "El personaje")
+        else:
+            char_name = "El personaje"
+
+        templates = [
+            "%s %s. La accion transcurre sin obstaculos, con la naturalidad de quien conoce su oficio." % (char_name, action),
+            "Con calma y determinacion, %s %s. El entorno apenas registra el movimiento." % (char_name, action),
+            "%s %s. Cada gesto es preciso, cada paso medido \u2014 una coreografia de lo cotidiano." % (char_name, action),
+            "Sin prisa y sin pausa, %s %s. El momento transcurre con la fluidez de lo inevitable." % (char_name, action),
+            "%s %s. Un acto simple, casi ritual, que el dungeon jamas interrumpe." % (char_name, action),
+        ]
+
+        import random as _random
+        return _random.choice(templates)
+
+    def _extract_dialogue_target(self, text: str) -> str:
+        """Extrae el nombre completo del PNJ destino de un dialogo.
+        Para 'hablo con Lady Akemi sobre el plan' retorna 'Lady Akemi'."""
+        import re
+        patterns = [
+            r"(?:habl[oa]r?\s*(?:con|a)|convers[oa]r?\s*(?:con|a)|(?:le\s+)?(?:digo|dices|dice)\s*(?:a|con))\s+(.+?)(?:\s+(?:sobre|acerca|de|para|que|\.)|$)",
+            r"(?:tell|say|talk|speak)\s+(?:to|with)\s+(.+?)(?:\s+(?:about|that|for|\.)|$)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                raw = match.group(1).strip()
+                raw = re.sub(r'\s+(?:sobre|acerca|de|para|que|about|that|please|por favor)\s*$', '', raw)
+                return ' '.join(w.capitalize() for w in raw.split())
+        return "el PNJ"
 
     def _extract_target(self, text: str, verbs: list) -> str | None:
         """Extrae el objetivo de una acción."""
@@ -453,8 +643,29 @@ class ActionRouter:
         Resuelve la acción usando el dice engine real y stats del personaje.
         Dispatcher: llama al método _resolve_<action_type> específico.
         """
+        # ── Auto-success path: no dice, pure narrative ────────────────────
+        if not intent.requires_roll:
+            narrative = self._generate_auto_success_narrative(intent)
+            return ActionResolution(
+                success=True,
+                narrative=narrative,
+            )
+
         method_name = f"_resolve_{intent.action_type}"
-        resolver = getattr(self, method_name, self._resolve_generic)
+        resolver = getattr(self, method_name, None)
+
+        # ── Fallback: intent created outside _parse() may have default requires_roll=True ──
+        if resolver is None:
+            act = intent.action_type
+            desc = (intent.action_description or act).lower()
+            if act in AUTO_SUCCESS_ACTIONS                or act.lower() in AUTO_SUCCESS_ACTIONS                or any(phrase in desc for phrase in AUTO_SUCCESS_ACTIONS)                or act in ("explore", "dialogue", "rest", "generic")                or self._is_auto_success(act, intent.action_description or act, {}):
+                narrative = self._generate_auto_success_narrative(intent)
+                return ActionResolution(
+                    success=True,
+                    narrative=narrative,
+                )
+            resolver = self._resolve_generic
+
         return resolver(intent)
 
     def _resolve_attack(self, intent: ActionIntent) -> ActionResolution:
@@ -463,6 +674,21 @@ class ActionRouter:
         roll = roll_result["total"]
         nat_20 = roll == 20
         nat_1 = roll == 1
+        # ── Surprised/unaware target: auto-hit, only roll damage ──────────
+        target_surprised = getattr(self, "_target_surprised", False)
+        if target_surprised:
+            dmg_result = _roll_dice("1d8")
+            damage = dmg_result["total"]
+            mechanic = (
+                "🎯 ¡Objetivo sorprendido! Golpe automático.\n"
+                f"Daño: *{damage}*"
+            )
+            return ActionResolution(
+                success=True, hit=True, damage=damage,
+                nat_20=False, nat_1=False, kill=False,
+                mechanic_inline=mechanic,
+            )
+
 
         # Stats reales del personaje, o defaults
         stat_mod = self._get_mod("str") if self.char else 0
@@ -893,11 +1119,16 @@ class ActionRouter:
         npc_data = None
         if self.state and "npcs" in self.state:
             npcs = self.state["npcs"]
-            # Buscar por nombre (case-insensitive)
+            # Buscar por nombre (case-insensitive) — con matching flexible
             target_lower = target.lower()
+            target_parts = set(target_lower.split())
             for npc_id, npc in npcs.items():
                 npc_name = npc.get("name", npc_id).lower()
-                if target_lower in npc_name or npc_name in target_lower:
+                npc_name_key = npc_id.lower().replace('_', ' ')  # "lady_akemi" → "lady akemi"
+                # Try: substring match, word-part overlap, ID key match
+                if (target_lower in npc_name or npc_name in target_lower or
+                    target_lower in npc_name_key or npc_name_key in target_lower or
+                    bool(target_parts & set(npc_name.split()))):
                     npc_data = npc
                     break
 
@@ -994,6 +1225,89 @@ class ActionRouter:
         # Por ahora hardcodeamos 14 (enemigo promedio)
         return 14
 
+    def _validate_combat_target(self, target: str | None) -> bool:
+        """Verify target exists in combat scene (combat active + target present)."""
+        if not target:
+            return False
+
+        combat = self.state.get("combat", {})
+        if not combat.get("active", False):
+            return False
+
+        # Check initiative order
+        combatants = [
+            c.get("name", "").lower() for c in combat.get("initiative_order", [])
+        ]
+        target_lower = target.lower()
+        if any(target_lower in c for c in combatants) or any(
+            c in target_lower for c in combatants
+        ):
+            return True
+
+        # Check NPCs at current location
+        npcs = self.state.get("npcs", {})
+        current_loc = self.state.get("campaign", {}).get("current_location", "")
+        for npc in npcs.values():
+            if npc.get("location") == current_loc:
+                npc_name = npc.get("name", "").lower()
+                if target_lower in npc_name or npc_name in target_lower:
+                    return True
+
+        return False
+    # -- P2: Travel Gate --
+
+    _TRAVEL_KEYWORDS = [
+        "voy a ", "me dirijo a ", "camino a ", "viajo a ",
+        "me voy a ", "voy para ", "me muevo hacia ", "avanzo a ",
+        "avanzo hacia ", "voy hasta ", "viajo hasta ",
+        "me dirijo hacia ", "camino hacia ",
+    ]
+
+    def _validate_travel(self, intent, action_text: str):
+        text_lower = action_text.lower()
+        destination = None
+        for kw in self._TRAVEL_KEYWORDS:
+            if kw in text_lower:
+                after = text_lower.split(kw, 1)[1].strip()
+                destination = after.split(".")[0].split(",")[0].split(" y ")[0].strip()
+                if destination:
+                    break
+        if not destination:
+            return None
+
+        loc_data = self.state.get("world", {}).get("locations", {})
+        if not loc_data:
+            return None
+
+        from dm.location_graph import Location, LocationGraph
+        graph = LocationGraph()
+        for name, data in loc_data.items():
+            if isinstance(data, dict):
+                graph.locations[name] = Location(
+                    name=name, description=data.get("description", ""),
+                    connections=data.get("connections", []),
+                    prerequisites=data.get("prerequisites", []),
+                    locked_until_flag=data.get("locked_until_flag"),
+                )
+
+        current = self.state.get("campaign", {}).get("current_location", "")
+        if not current:
+            return None
+
+        world_flags = self.state.get("world_flags", {})
+        matched = None
+        for loc_name in graph.locations:
+            if destination in loc_name.lower() or loc_name.lower() in destination:
+                matched = loc_name
+                break
+        if not matched:
+            return None
+
+        can_travel, reason = graph.can_travel_to(current, matched, world_flags)
+        if not can_travel:
+            return "\u26d4 **No pod\u00e9s viajar.** " + reason
+        return None
+
     # ------------------------------------------------------------------#
     # Clasificación y contexto
     # ------------------------------------------------------------------#
@@ -1080,6 +1394,7 @@ class ActionRouter:
             "npc_or_character_present": npc_name,
             "reaction_description": "te observa con recelo",
             "action_description": action_text,
+            "player_action": action_text,
             "obstacle": "El camino adelante permanece abierto.",
             "emotional_tone": emotional_tone,
             # Dialogue

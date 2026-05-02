@@ -11,9 +11,6 @@ class Language(str, Enum):
     EN = "en"
 
 
-class CampaignStatus(str, Enum):
-    """Campaign lifecycle status."""
-
     ACTIVE = "active"
     COMPLETED = "completed"
     PAUSED = "paused"

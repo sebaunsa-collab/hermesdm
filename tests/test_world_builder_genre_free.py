@@ -18,6 +18,7 @@ def _make_mock_response(premise):
     """Genera un JSON mock de respuesta de AI que NO hace echo del input."""
     data = {
         "premise": premise,
+        "setting_type": "fantasy",
         "hook": "Un evento inesperado cambia todo.",
         "starting_location": "Aldea Shimizu",
         "starting_location_desc": "Pueblo entre montañas y ríos.",

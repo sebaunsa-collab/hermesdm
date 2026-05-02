@@ -92,6 +92,13 @@ def _build_final_text(
     else:
         result_icon = "🎯"
 
+    # Auto-success (no dice): skip dice line entirely
+    if not mechanic_inline or mechanic_inline.strip() == "":
+        return (
+            f"{result_icon} *Resultado{badge}*\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"{narrative}"
+        )
     return (
         f"{result_icon} *Resultado{badge}*\n"
         f"━━━━━━━━━━━━━━━━\n"

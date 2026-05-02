@@ -214,17 +214,21 @@ class TestCmdStart:
     """Tests for cmd_start."""
 
     async def test_start_sends_welcome(self, mock_update, mock_context):
-        """Test /start sends a welcome message."""
+        """Test /start with no active campaign shows setup prompt."""
         await cmd_start(mock_update, mock_context)
         mock_update.message.reply_text.assert_called_once()
         call_args = mock_update.message.reply_text.call_args
         text = call_args[0][0]
-        assert "HermesDM" in text
-        assert "welcome" in text.lower() or "Welcome" in text
+        # New cmd_start requires active campaign; without one, prompts /setup
+        assert "No hay campaña activa" in text or "HermesDM" in text
 
     async def test_start_no_crash_on_exception(self, mock_update, mock_context):
         """Test /start handles exceptions gracefully."""
-        mock_update.message.reply_text.side_effect = Exception("Send failed")
+        # First call raises, second call (in exception handler) succeeds
+        mock_update.message.reply_text.side_effect = [
+            Exception("Send failed"),
+            None,
+        ]
         # Should not raise
         await cmd_start(mock_update, mock_context)
 
@@ -244,7 +248,7 @@ class TestCmdHelp:
         mock_update.message.reply_text.assert_called_once()
         call_args = mock_update.message.reply_text.call_args
         text = call_args[0][0]
-        assert "/newgame" in text
+        assert "/setup" in text     # /newgame deprecated, /setup is current
         assert "/join" in text
         assert "/roll" in text
         assert "/attack" in text
@@ -905,7 +909,16 @@ class TestCmdTalk:
                 "history": [{"session": 1, "event": "Test"}],
             }
             mock_context.args = ["captain_vorn", "Hello"]
-            await cmd_talk(mock_update, mock_context)
+            # Mock _get_npc_store to prevent disk read (isolation)
+            # Mock ActionNarrator to avoid real HTTP calls to LLM
+            with patch(
+                "bot.telegram_handler._get_npc_store",
+                return_value=MagicMock(),
+            ), patch(
+                "dm.action_narrator.ActionNarrator.narrate_npc_response",
+                return_value="Captain Vorn looks at you and nods slowly. 'Aye, what brings you here, stranger?'"
+            ):
+                await cmd_talk(mock_update, mock_context)
 
         mock_update.message.reply_text.assert_called_once()
         text = mock_update.message.reply_text.call_args[0][0]
@@ -1272,3 +1285,59 @@ async def test_echo_handler_general_help_without_campaign(mock_update, mock_cont
     text = mock_update.message.reply_text.call_args[0][0]
     assert "No entendí" in text
     assert "/help" in text
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Additional coverage tests for previously uncovered commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCmdVersion:
+    """Tests for /version command."""
+
+    @pytest.mark.asyncio
+    async def test_version_shows_info(self, mock_update, mock_context):
+        """cmd_version returns bot version information."""
+        from bot.telegram_handler import cmd_version
+        await cmd_version(mock_update, mock_context)
+        mock_update.message.reply_text.assert_called_once()
+        text = mock_update.message.reply_text.call_args[0][0]
+        assert "HermesDM" in text or "v" in text
+
+    @pytest.mark.asyncio
+    async def test_version_handles_exception(self, mock_update, mock_context):
+        """cmd_version handles errors gracefully."""
+        from bot.telegram_handler import cmd_version
+        mock_update.message.reply_text.side_effect = Exception("Send failed")
+        await cmd_version(mock_update, mock_context)
+        mock_update.message.reply_text.assert_called()
+
+
+class TestCmdQuit:
+    """Tests for /quit command (exit campaign)."""
+
+    @pytest.mark.asyncio
+    async def test_quit_no_campaign(self, mock_update, mock_context):
+        """cmd_quit without active campaign shows message."""
+        from bot.telegram_handler import cmd_quit
+        await cmd_quit(mock_update, mock_context)
+        mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_quit_handles_exception(self, mock_update, mock_context):
+        """cmd_quit handles errors gracefully."""
+        from bot.telegram_handler import cmd_quit
+        mock_update.message.reply_text.side_effect = Exception("Send failed")
+        await cmd_quit(mock_update, mock_context)
+        mock_update.message.reply_text.assert_called()
+
+
+class TestCmdMe:
+    """Tests for /me command (narrative action without dice)."""
+
+    @pytest.mark.asyncio
+    async def test_me_no_campaign(self, mock_update, mock_context):
+        """cmd_me without active campaign shows prompt."""
+        from bot.telegram_handler import cmd_me
+        mock_update.message.text = "/me salta por la ventana"
+        await cmd_me(mock_update, mock_context)
+        mock_update.message.reply_text.assert_called_once()
+

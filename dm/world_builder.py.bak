@@ -293,14 +293,17 @@ CRÍTICO — Reglas de oro:
    Ejemplo de input: "quiero una historia de jóvenes en un juego VR"
    → MAL: lugar = "Las Tierras de jóvenes", NPC = "juego"
    → BIEN: lugar = "La Cúpula de Cristal", NPC = "Rika, la mensajera digital"
-3. Detectá el género y usalo como setting_type:
-   - VR/IA/red/digital/cibernético/cyberpunk/post-apocalíptico → "scifi"
-   - magia/dragones/reinos/castillos/espadas → "fantasy"
-   - zombis/apocalipsis/supervivencia → "zombie"
-   - horror/oscuro/maldito/terror/psicológico → "horror"
-   - piratas/corsarios/mares/navegación → "pirate"
-   - vampiro/licántropo → "horror"
-   - DEFAULT si none → "fantasy"
+3. Detectá el género del input y usalo como setting_type en la respuesta:
+   - Si menciona: VR, realidad virtual, online, digital, IA, red, servidor, juego, MMORPG, ciberseguridad → setting_type = "scifi"
+   - Si menciona: magia, dragones, reinos, castillos, espadas, fantasía → setting_type = "fantasy"
+   - Si menciona: zombis, apocalipsis, supervivencia, muerto viviente → setting_type = "zombie"
+   - Si menciona: horror, oscuro, maldito, terror → setting_type = "horror"
+   - Si menciona: piratas, corsarios, mares, navegación, barco → setting_type = "pirate"
+   - Si menciona: superhéroes, superhero, villano, capitans, justice, marvel, DC, спаситель → setting_type = "scifi"
+   - Si menciona: hombre lobo, licántropo, hombre lobo, licántropos → setting_type = "horror"
+   - Si menciona: vampiro, vampira, no-muerto, beber sangre → setting_type = "horror"
+   - Si menciona: western, vaquero, sheriff, saloon → setting_type = "fantasy"
+   - DEFAULT si none match → setting_type = "fantasy"
 
 IDEA DEL DM (solo para inspiración, NO para copiar):
 {description}
@@ -317,21 +320,19 @@ Generá una campaña COMPLETA en español. Cada campo debe ser original, creativ
 6. **factions** (2-3): Nombre + estado (DOMINANT/RISING/HIDDEN/CORRUPT/etc). Deben estar en conflicto.
 7. **npcs** (2-3): Nombres propios INVENTADOS, rol específico, y una línea de diálogo que revele personalidad. Deben estar relacionados con el setting.
 8. **classes** (3-5): Nombres de clases temáticas que encajen en el setting. NO uses "Guerrero/Mago/Pícaro" a menos que sea fantasy genérico.
-9. **story_arc**: Milestones según pacing_level={pacing_level}. Cada milestone debe tener una descripción concreta de >30 palabras. Incluí "unlock_flags" en cada milestone (flags que se activan al completarlo).
+10. **story_arc**: Milestones según pacing_level={pacing_level}. Cada milestone debe tener una descripción concreta de >30 palabras.
 
-10. **locations**: Generá 3-8 ubicaciones conectadas con "connections" y "prerequisites".
-Formato de ubicación:
-  {{
-    "name": "Torre Zenith",
-    "description": "...",
-    "connections": ["Bosque Oscuro", "Cripta"],
-    "prerequisites": [],
-    "locked_until_flag": null,
-    "distance_from_previous": 2,
-    "obstacles": ["puerta sellada", "guardias"]
-  }}
-Cada ubicación DEBE conectar con al menos otra. La ubicación inicial con connections vacías es válida.
-Las ubicaciones avanzadas (jefe final, tesoro) deben tener prerequisites o locked_until_flag.
+MILESTONE FORMAT EXAMPLES:
+✅ GOOD: "Los PJ deben encontrar el Amuleto de Anubis en el Templo Olvidado antes de la medianoche"
+✅ GOOD: "Los PJ necesitan escapar del laberinto antes de que el agua los ahogue"
+❌ BAD: "La calma antes de la tormenta"
+❌ BAD: "El misterio del templo olvidado"
+
+Each milestone MUST:
+1. Start with "Los PJ deben" or "Los PJ necesitan"
+2. Include a SPECIFIC VERB: encontrar, descubrir, escapar, convencer, destruir
+3. Name specific objects, locations, or NPCs
+4. Be achievable within 3-5 sessions
 
 Respondé ÚNICAMENTE en JSON válido con este formato exacto:
 {{
@@ -343,9 +344,7 @@ Respondé ÚNICAMENTE en JSON válido con este formato exacto:
   "factions": {{ "nombre_faccion": "ESTADO", ... }},
   "npcs": [{{ "name": "...", "role": "...", "dialogue": "..." }}, ...],
   "classes": ["Clase1", "Clase2", "Clase3"],
-  "locations": [
-    {{ "name": "...", "description": "...", "connections": [], "prerequisites": [], "locked_until_flag": null, "distance_from_previous": 1, "obstacles": [] }}
-  ],
+  "starting_equipment": [{{ "name": "...", "description": "...", "is_consumable": false }}, ...],
   "story_arc": {{
     "pacing_level": "{pacing_level}",
     "milestones": [
@@ -412,7 +411,7 @@ No escribas nada más que el JSON."""
                 "starting_location_desc": parsed["starting_location_desc"],
                 "npcs": parsed["npcs"],
             },
-            "starting_equipment": parsed.get("starting_equipment", []),
+            "starting_equipment": parsed["starting_equipment"],
             "story_arc": story_arc.to_dict(),
         }
 
@@ -445,6 +444,7 @@ Responde en JSON:
   "factions": {{"...": "..."}},
   "npcs": [{{"name": "...", "role": "...", "dialogue": "..."}}],
   "classes": ["..."],
+  "starting_equipment": [{{"name": "...", "description": "...", "is_consumable": false}}]
 }}
 
 Reglas:
@@ -498,7 +498,7 @@ Reglas:
                             "starting_location_desc": parsed["starting_location_desc"],
                             "npcs": parsed["npcs"],
                         },
-                        "starting_equipment": parsed.get("starting_equipment", []),
+                        "starting_equipment": parsed["starting_equipment"],
                         "story_arc": story_arc.to_dict(),
                     }
                     setup = _sanitize_setup(setup, description)
@@ -1092,23 +1092,6 @@ def build_world(setting: str = "fantasy") -> dict:
             "visited": True,
         }
     }
-
-    # AI-generated locations (if any) — merge into world.locations
-    ai_locations = tmpl.get("locations", [])
-    for loc in ai_locations:
-        loc_name = loc.get("name", "")
-        if not loc_name or loc_name == starting_loc:
-            continue
-        state["world"]["locations"][loc_name] = {
-            "description": loc.get("description", ""),
-            "npcs": [],
-            "visited": False,
-            "connections": loc.get("connections", []),
-            "prerequisites": loc.get("prerequisites", []),
-            "locked_until_flag": loc.get("locked_until_flag"),
-            "distance_from_previous": loc.get("distance_from_previous", 1),
-            "obstacles": loc.get("obstacles", []),
-        }
 
     # NPCs — from template or fallback
     if template_available and "npcs" in tmpl and tmpl["npcs"]:

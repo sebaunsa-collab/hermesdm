@@ -75,10 +75,6 @@ from bot.turn_manager import (
 from dm.image_prompt_builder import build_closure_image_prompt
 from dm.narrative_generator import Language, NarrativeGenerator, SceneType
 from dm.provider_client import get_provider
-from dm.reactions import ReactionEngine
-from dm.spellbook import Spellbook, create_spellbook_for_class, get_class_spell_list
-from dm.npc_memory import MemoryEngine
-from dm.choice_tracker import ChoiceTracker
 from dm.action_narrator import get_narrator
 from state.state_manager import (
     append_history,
@@ -1327,20 +1323,6 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         char.telegram_id = update.effective_user.id  # type: ignore[attr-defined]
         chat_data = context.chat_data
         cs: ChatState = chat_data.get("_hermes_state", ChatState())
-                # ── Level 3: Create spellbook for spellcasters ──
-        from dm.spellbook import create_spellbook_for_class, KNOWN_CASTERS, PREPARED_CASTERS
-        all_casters = KNOWN_CASTERS | PREPARED_CASTERS | {'wizard', 'cleric', 'druid', 'artificer', 'ranger', 'paladin'}
-        if char.player_class.lower() in all_casters:
-            try:
-                sb = create_spellbook_for_class(char.player_class, char.level)
-                char.spellbook = sb
-                # Populate known_spells from spellbook for reactions system
-                all_spells = list(sb.spellbook.keys()) if hasattr(sb, 'spellbook') else []
-                char.known_spells = all_spells
-            except Exception:
-                char.spellbook = None
-                char.known_spells = []
-
         cs.characters[name.lower()] = char
         cs.telegram_characters[update.effective_user.id] = name.lower()
         chat_data["_hermes_state"] = cs
@@ -2298,10 +2280,6 @@ async def cmd_talk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         speaker = char.name if char else "Unknown"
 
         # ── LLM-powered NPC response (with memory and secrets) ──
-                # ── Level 3: NPC Memory context ──
-        memory_engine = MemoryEngine(state)
-        memory_ctx = memory_engine.get_dialogue_context(npc_key, npc["name"], speaker)
-
         narrator = get_narrator()
         npc_store = _get_npc_store(cs.active_campaign)
         npc_record = npc_store.find_by_name(npc["name"])
@@ -2312,9 +2290,6 @@ async def cmd_talk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if npc_record:
             npc_memory_values = [m.value for m in npc_record.memory]
             npc_secret = npc_record.secret
-        # Merge Level 3 memory context
-        if memory_ctx:
-            npc_memory_values.append(memory_ctx)
 
         # Get recent history for context
         recent_history = [h.get("event", "") for h in state.get("history", [])[-10:]]
@@ -2330,13 +2305,6 @@ async def cmd_talk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             player_message=message,
             location=state.get("campaign", {}).get("current_location", ""),
             recent_history=recent_history,
-        )
-
-                # Record interaction in NPC memory
-        memory_engine.record_interaction(
-            npc_key, npc["name"], speaker,
-            f'{speaker} said: {message}',
-            disposition_delta=0, importance=1
         )
 
         if npc_response:
@@ -2678,167 +2646,6 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 @with_audit("cmd_endturn")
-
-
-# ── Level 3: /spells command ──────────────────────────────────────────────
-async def cmd_spells(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /spells — show spellbook or available spells."""
-    try:
-        chat_data = context.chat_data
-        cs: ChatState = chat_data.get("_hermes_state", ChatState())
-        player_name = update.effective_user.first_name.lower()
-        char = cs.character_for(player_name)
-        if char is None and cs.characters:
-            char = list(cs.characters.values())[0]
-
-        if char is None:
-            await update.message.reply_text("No character found. Use /join first.")
-            return
-
-        # Check if character has spellbook
-        spellbook = getattr(char, 'spellbook', None)
-        if spellbook:
-            display = spellbook.format_spellbook()
-            await update.message.reply_text(display, parse_mode=ParseMode.MARKDOWN)
-        else:
-            # Show basic spell list from spell_manager
-            spell_list = spell_mgr.format_spell_list(char)
-            await update.message.reply_text(
-                f"📖 **Spells** ({char.player_class.title()})\n\n{spell_list}",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-    except Exception as e:
-        log.exception("cmd_spells error")
-        await update.message.reply_text(f"Error: {e}")
-
-
-# ── Level 3: /prepare command ─────────────────────────────────────────────
-async def cmd_prepare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /prepare <spell> — prepare a spell for the day (prepared casters)."""
-    try:
-        chat_data = context.chat_data
-        cs: ChatState = chat_data.get("_hermes_state", ChatState())
-        player_name = update.effective_user.first_name.lower()
-        char = cs.character_for(player_name)
-        if char is None and cs.characters:
-            char = list(cs.characters.values())[0]
-
-        if char is None:
-            await update.message.reply_text("No character found. Use /join first.")
-            return
-
-        spellbook = getattr(char, 'spellbook', None)
-        if not spellbook:
-            await update.message.reply_text("Your class doesn't use spell preparation.")
-            return
-
-        if not spellbook.is_prepared_caster():
-            await update.message.reply_text("Your class doesn't require preparation. All known spells are always available.")
-            return
-
-        args = context.args
-        if not args:
-            display = spellbook.format_preparation()
-            await update.message.reply_text(display, parse_mode=ParseMode.MARKDOWN)
-            return
-
-        spell_name = " ".join(args).lower()
-
-        # Find spell level from spellbook
-        found_level = None
-        for lvl, spells in spellbook.spellbook.items():
-            if spell_name in [s.lower() for s in spells]:
-                found_level = lvl
-                break
-
-        if found_level is None:
-            await update.message.reply_text(f"Spell '{spell_name}' not in your spellbook.")
-            return
-
-        success = spellbook.prepare_spell(spell_name, found_level)
-        if success:
-            await update.message.reply_text(f"\u2705 Prepared **{spell_name.title()}** (Level {found_level})")
-        else:
-            await update.message.reply_text(f"Already prepared or not in spellbook.")
-
-        chat_data["_hermes_state"] = cs
-    except Exception as e:
-        log.exception("cmd_prepare error")
-        await update.message.reply_text(f"Error: {e}")
-
-
-# ── Level 3: /remember command ────────────────────────────────────────────
-async def cmd_remember(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /remember [npc_name] — show NPC memory or choice history."""
-    try:
-        chat_data = context.chat_data
-        cs: ChatState = chat_data.get("_hermes_state", ChatState())
-
-        if not cs.active_campaign:
-            await update.message.reply_text("No active campaign.")
-            return
-
-        state = load_state(cs.active_campaign)
-        if state is None:
-            await update.message.reply_text("Campaign not found.")
-            return
-
-        args = context.args
-        memory_engine = MemoryEngine(state)
-
-        if args:
-            # Show specific NPC memory
-            npc_name = args[0].lower().replace(" ", "_")
-            npc_key = None
-            for key in state.get("npcs", {}):
-                if key == npc_name or state["npcs"][key].get("name", "").lower().replace(" ", "_") == npc_name:
-                    npc_key = key
-                    break
-
-            if npc_key:
-                display = memory_engine.get_npc_memory_display(npc_key)
-                await update.message.reply_text(display, parse_mode=ParseMode.MARKDOWN)
-            else:
-                await update.message.reply_text(f"NPC '{npc_name}' not found.")
-        else:
-            # Show choice history
-            tracker = ChoiceTracker(state)
-            display = tracker.get_choice_display()
-            await update.message.reply_text(display, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        log.exception("cmd_remember error")
-        await update.message.reply_text(f"Error: {e}")
-
-
-# ── Level 3: /disengage command ───────────────────────────────────────────
-async def cmd_disengage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /disengage — take Disengage action (no opportunity attacks)."""
-    try:
-        chat_data = context.chat_data
-        cs: ChatState = chat_data.get("_hermes_state", ChatState())
-        player_name = update.effective_user.first_name.lower()
-        char = cs.character_for(player_name)
-        if char is None and cs.characters:
-            char = list(cs.characters.values())[0]
-
-        if char is None:
-            await update.message.reply_text("No character found.")
-            return
-
-        if cs.combat_state and cs.combat_state.active:
-            char.has_disengaged = True
-            chat_data["_hermes_state"] = cs
-            await update.message.reply_text(
-                f"\U0001f6e1 **{char.name}** takes the **Disengage** action.\n"
-                f"No opportunity attacks until your next turn."
-            )
-        else:
-            await update.message.reply_text("Disengage is a combat action. Start combat first.")
-    except Exception as e:
-        log.exception("cmd_disengage error")
-        await update.message.reply_text(f"Error: {e}")
-
-
 async def cmd_endturn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /endturn — advance combat to the next turn with countdown."""
     try:
@@ -2869,14 +2676,6 @@ async def cmd_endturn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     await context.bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
                 except Exception:
                     pass
-
-            # ── Level 3: Check opportunity attacks ──
-            reaction_results = []
-            try:
-                from dm.reactions import ReactionEngine
-                reaction_engine = ReactionEngine(state if 'state' in dir() else chat_data.get("_hermes_state", {}).__dict__)
-            except Exception:
-                reaction_engine = None
 
             # Advance turn
             result = next_turn(cs.combat_state)
@@ -4091,19 +3890,6 @@ def build_app() -> Application:
     app.add_handler(
         CommandHandler("conditions", cmd_conditions, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
-    # Level 3 commands
-    app.add_handler(
-        CommandHandler("spells", cmd_spells, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
-    )
-    app.add_handler(
-        CommandHandler("prepare", cmd_prepare, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
-    )
-    app.add_handler(
-        CommandHandler("remember", cmd_remember, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
-    )
-    app.add_handler(
-        CommandHandler("disengage", cmd_disengage, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
-    )
     app.add_handler(
         CommandHandler("endturn", cmd_endturn, filters=filters.Chat(settings.ALLOWED_GROUP_ID) if settings.ALLOWED_GROUP_ID else None)
     )
@@ -4239,7 +4025,6 @@ async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TY
     Core shared logic for processing a player action text.
     Used by both cmd_j (CommandHandler) and _j_action_handler (MessageHandler).
     """
-    from state.state_manager import load_state, save_state
     try:
         if not action_text:
             await update.message.reply_text(
@@ -4266,16 +4051,6 @@ async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TY
                         cs.characters[key] = Character.from_dict(char_data)
                     except Exception:
                         pass
-                # Restore spellbook and known_spells from state
-                spellbooks = st.get("spellbook", {})
-                for sk, sb_data in spellbooks.items():
-                    if sk in cs.characters:
-                        try:
-                            from dm.spellbook import Spellbook
-                            cs.characters[sk].spellbook = Spellbook.from_dict(sb_data)
-                            cs.characters[sk].known_spells = list(cs.characters[sk].spellbook.spellbook.keys())
-                        except Exception:
-                            pass
                 # Rebuild telegram_characters mapping if possible
                 # (we can't know tg_id from state, so fallback name matching will be used)
 
@@ -4322,14 +4097,11 @@ async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TY
         from dm.pacing_engine import create_pacing_engine
 
         # ── Update scene/act counters for encounter pacing ────────────────────
-        # Only increment on SIGNIFICANT scenes (not every /j action)
-        # This prevents forced encounters after just 4 casual actions
-        _significant_actions = ("attack", "cast", "skill", "travel", "explore", "dialogue", "rest")
-        if result.action_type in _significant_actions:
-            state["scene_count"] = state.get("scene_count", 0) + 1
-        # act_counter only increments for social/exploration (not combat)
-        if result.action_type in ("dialogue", "explore", "generic", "skill"):
-            state["act_counter"] = state.get("act_counter", 0) + 1
+        # CRITICAL: These counters are read by SceneDirector for forced encounters
+        # (every 4 scenes) and NPC surprises (every 5 acts). They were NEVER
+        # being incremented before, causing the game to be pure exploration.
+        state["scene_count"] = state.get("scene_count", 0) + 1
+        state["act_counter"] = state.get("act_counter", 0) + 1
 
         # Create pacing engine and decide scene type
         pacing = create_pacing_engine(state)
@@ -4715,36 +4487,6 @@ async def _handle_player_action(update: Update, context: ContextTypes.DEFAULT_TY
         })
         # Keep last 10 entries
         state["history"] = history[-10:]
-
-        # Level 3: Record player choice in choice tracker
-        try:
-            from dm.choice_tracker import ChoiceTracker
-            tracker = ChoiceTracker(state)
-            # Track combat vs non-combat decisions
-            if result.action_type in ("attack", "cast"):
-                tracker.record_choice(
-                    description=f"Combat action: {action_text[:80]}",
-                    category="combat",
-                    options=["fight", "flee", "negotiate"],
-                    chosen="fight",
-                )
-            elif result.action_type == "dialogue":
-                tracker.record_choice(
-                    description=f"Social action: {action_text[:80]}",
-                    category="social",
-                    options=["cooperate", "deceive", "intimidate", "ignore"],
-                    chosen="interact",
-                )
-            elif result.action_type == "explore":
-                tracker.record_choice(
-                    description=f"Exploration: {action_text[:80]}",
-                    category="exploration",
-                    options=["investigate", "advance", "rest"],
-                    chosen="explore",
-                )
-            tracker.save()
-        except Exception:
-            pass  # Don't break game if choice tracking fails
 
         from state.state_manager import save_state
         save_state(cs.active_campaign, state)

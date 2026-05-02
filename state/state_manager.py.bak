@@ -78,11 +78,6 @@ def new_state(campaign_id: str, name: str, setting: str) -> dict:
         "use_scene_director": True,
         "use_content_engine": True,
         "dungeon": None,
-        "npc_memories": {},
-        "spellbook": {},
-        "choices": {"log": [], "consequences": []},
-        "choice_consequences": [],
-        "reactions": {},
         "player": {
             "xp_current": 0,
             "level": 1,
@@ -289,17 +284,6 @@ def sync_chatstate_to_state(campaign_id: str, cs) -> dict | None:
             "current_index": 0,
             "current_turn": None,
         }
-
-    # Level 3: Persist spellbook per character
-    for key, char in cs.characters.items():
-        if hasattr(char, 'spellbook') and char.spellbook is not None:
-            state.setdefault("spellbook", {})[key] = char.spellbook.to_dict() if hasattr(char.spellbook, 'to_dict') else {}
-
-    # Level 3: Persist character known_spells
-    for key, char in cs.characters.items():
-        if hasattr(char, 'known_spells') and char.known_spells:
-            if key in state.get("characters", {}):
-                state["characters"][key]["known_spells"] = char.known_spells
 
     save_state(campaign_id, state)
     return state

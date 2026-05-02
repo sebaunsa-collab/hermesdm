@@ -429,7 +429,6 @@ class Character:
     equipped_armor: str | None = None
 
     # --- Acciones que duran hasta el siguiente turno ---
-    known_spells: list = field(default_factory=list)  # spell names known
     has_disengaged: bool = False
     has_dashed: bool = False
     is_helping: bool = False
@@ -592,7 +591,6 @@ class Character:
             "is_hiding": self.is_hiding,
             "pending_ready": self.pending_ready,
             "object_uses": self.object_uses,
-            "known_spells": self.known_spells,
             "spell_slots": {
                 "total": self.spell_slots.total,
                 "used": self.spell_slots.used,
@@ -614,7 +612,6 @@ class Character:
             used=slot_data.get("used", [0]*9),
         )
         inv = [Item.from_dict(i) for i in data.get("inventory", [])]
-        known_spells = data.get("known_spells", [])
         c = cls(
             name=data["name"],
             player_class=data["class"],
@@ -631,7 +628,6 @@ class Character:
             carried_gold=data.get("carried_gold", 0),
             equipped_weapon=data.get("equipped_weapon"),
             equipped_armor=data.get("equipped_armor"),
-            known_spells=known_spells,
         )
         return c
 

@@ -39,65 +39,37 @@ class SceneType(str, Enum):
 _NARRATIVE_TEMPLATES: dict[Language, dict[SceneType, list[str]]] = {
     Language.ES: {
         SceneType.EXPLORATION: [
-            # Structure A: Setting first (classic)
             "El {location} se extiende ante ti, {sensory_detail}. "
             "{character_present} {action_description}. "
             "El camino adelante está {obstacle}",
-            # Structure B: Action/sensation first
-            "{sensory_detail}. Te quedás quieto un momento, procesando lo que ves. "
-            "{environmental_detail}. {npc_or_character_present} {reaction_description}.",
-            # Structure C: NPC/dialogue hook first
+            "Te encuentras en {location}, donde {environmental_detail}. "
             "{npc_or_character_present} {reaction_description}. "
-            "Pero hay algo más aquí: {sensory_detail}. "
-            "{ambient_threat}",
-            # Structure D: Mystery/question first
-            "Algo no cuadna en {location}. {environmental_detail}. "
-            "{sensory_detail}. {character_present} lo nota de inmediato.",
-            # Structure E: Time/weather/atmosphere first
-            "El ambiente en {location} es particular hoy. {sensory_detail}. "
-            "{environmental_detail}. {character_present} {action_description}.",
-            # Structure F: Immediate tension
-            "{ambient_threat}. Mirás a tu alrededor: {sensory_detail}. "
-            "{npc_or_character_present} {reaction_description}. "
-            "El obstáculo es claro: {obstacle}",
+            "{ambient_threat} mientras consideras tu siguiente movimiento",
+            "El {location} te recibe con {sensory_detail}. "
+            "{character_present} {action_description}. "
+            "Algo en este lugar se siente {emotional_tone}",
         ],
         SceneType.COMBAT: [
-            # Structure A: Attack first
             "{attacker} se lanza hacia {defender}, {attack_description}. "
             "El {impact_type} resuena a través del {environment}. "
             "{defender_status}",
-            # Structure B: Impact/sensation first
-            "El {impact_type} golpea tus sentidos. {attacker} {attack_description}. "
-            "{defender_status}. {tactical_situation}",
-            # Structure C: Tactical position first
-            "{tactical_situation}. {attacker} {attack_description} contra {defender}. "
-            "{bystanders_react}. El {environment} ofrece {environmental_factor}.",
-            # Structure D: Chaos/atmosphere first
             "El caos estalla cuando {attacker} {attack_description} contra {defender}. "
             "{bystanders_react}. "
             "{tactical_situation}",
+            "{attacker} ataca con {attack_descriptor}, {attack_description}. "
+            "El {environment} ofrece {environmental_factor}. "
+            "{defender_status}",
         ],
         SceneType.DIALOGUE: [
-            # Structure A: Speaker action first
             "{speaker} se vuelve hacia ti, {speech_trait}. "
             '"{dialogue_excerpt}", dice, {gesture}. '
             "El aire entre ustedes se siente {emotional_tone}",
-            # Structure B: Dialogue first (in medias res)
-            '"{opening_line}" {speaker_action}. '
-            "{speaker} te mira a los ojos, {character_mood}. "
-            "{listener_reaction}",
-            # Structure C: Observation/tension first
-            "Notás algo en la expresión de {speaker}: {character_mood}. "
-            '"{dialogue_excerpt}" {speech_descriptor}. '
-            "{tension_point}",
-            # Structure D: Context/action first
-            "{location_context}. {speaker} aparece de entre las sombras. "
+            "{speaker} te mira directamente, {character_mood}. "
             '"{first_words}" {speech_descriptor}. '
-            "No hay tiempo para preparar una respuesta.",
-            # Structure E: Emotional setup
-            "El peso de lo no dicho se siente entre vos y {speaker}. "
+            "{listener_reaction}",
+            "Encuentras a {speaker} {location_context}. "
             '"{opening_line}" {speaker_action}. '
-            "{gesture} {listener_reaction}",
+            "{tension_point}",
         ],
         SceneType.STORY_BEAT: [
             "La verdad se revela ante ti: {revelation}. "
@@ -325,48 +297,6 @@ or its effects shown, even if not directly active. Options:
 - Environmental reminder
 """
 
-
-# ---------------------------------------------------------------------------
-# P4 — DM Coherence Instructions (Progression Gates)
-# ---------------------------------------------------------------------------
-
-DM_COHERENCE_INSTRUCTIONS = """
-## INSTRUCCIÓN DE COHERENCIA NARRATIVA (DM GATE)
-
-Sos el Dungeon Master. Podés — y debés — decir NO cuando un jugador intente
-algo imposible o contradictorio con el estado del mundo.
-
-### REGLAS DE RECHAZO
-Rechazá la acción del jugador SI:
-1. Intenta atacar sin estar en combate activo (combat.active = false)
-2. Intenta viajar a una ubicación bloqueada o sin conexión desde su posición actual
-3. Intenta entrar a una locación bloqueada por un world_flag (ej: puerta cerrada)
-4. Intenta interactuar con un NPC que no está presente en la ubicación actual
-
-### CÓMO RECHAZAR
-- Narrá el intento Y su fallo desde la perspectiva del personaje
-- NUNCA digas "no podés por razones de juego" — da una razón narrativa
-- Ej: en vez de "esa puerta no existe", narrá: "Tanteás la pared buscando la puerta, pero solo encontrás piedra fría. La entrada que recordás del mapa no está aquí."
-
-### WORLD FLAGS ACTIVOS
-{world_flags_json}
-Usá estos flags para determinar qué está bloqueado y qué está disponible.
-
-### EJEMPLOS DE RECHAZO
-
-**Ejemplo 1 — Ataque sin combate:**
-Jugador: "Ataco al guardia con mi espada"
-→ Rechazo válido: "Desenvainás tu espada, pero el guardia te mira con confusión. '¿Qué hacés?' pregunta. No hay hostilidades aquí... aún. Bajás el arma lentamente."
-
-**Ejemplo 2 — Ubicación bloqueada:**
-Jugador: "Entro al templo sagrado"
-→ Rechazo válido: "Te acercás a las enormes puertas del templo. Están selladas con un brillo dorado — runas antiguas que no ceden a tu toque. Claramente, necesitás algo más que fuerza para entrar aquí."
-
-**Ejemplo 3 — NPC ausente:**
-Jugador: "Le pregunto al rey sobre el tesoro"
-→ Rechazo válido: "Buscás al rey entre la multitud de la taberna, pero no está aquí. El trono está vacío en la capital, a días de viaje de donde te encontrás."
-"""
-
 NARRATIVE_DICE_RULE = """
 ## REGLA NARRATIVA: Dados y Resultados
 
@@ -481,148 +411,40 @@ class NarrativeGenerator:
         )
         npcs_present_str = "\n".join(npc_details) if npc_details else "No hay NPCs cercanos."
 
-        # ── Genre-aware default values (with VARIATION to avoid repetition) ──
-        import random as _rand
+        # ── Genre-aware default values ──────────────────────────────────────
         genre_defaults = {
             "fantasy": {
-                "sensory_detail": [
-                    "el crujir de madera vieja y el eco de pasos en el barro",
-                    "aire frío que trae el olor a piedra mojada y hierba silvestre",
-                    "la luz temblorosa de antorchas proyecta sombras danzantes",
-                    "polvo antiguo flota en rayos de sol que se filtran por grietas",
-                    "el murmullo lejano de un río y el cantar de grillos nocturnos",
-                    "un viento suave trae fragancia de flores silvestres y humo de campamento",
-                    "el crujido de armaduras y el relincho lejano de caballos",
-                ],
-                "environmental_detail": [
-                    "torres de piedra se alzan contra un cielo encendido al atardecer",
-                    "un camino de adoquines serpentea entre casas de madera y techo de paja",
-                    "banderas descoloridas cuelgan de los muros del castillo",
-                    "un mercado improvisado se extiende bajo toldos de colores",
-                    "ruinas de un templo antiguo dominan el horizonte",
-                    "un bosque denso rodea la aldea, sus árboles murmurando secretos",
-                ],
-                "ambient_threat": [
-                    "gárgolas de piedra parecen seguirte con la mirada",
-                    "una figura encapuchada te observa desde las sombras",
-                    "el sonido de una campana lejana marca la hora",
-                    "olas de calor distorsionan el aire sobre la llanura",
-                ],
-                "obstacle": [
-                    "guardias armados controlan el paso",
-                    "una barricada improvisada bloquea la calle principal",
-                    "un portón reforzado con cadenas custodia la entrada",
-                ],
+                "sensory_detail": "el olor a tierra mojada y el crujir de armas antiguas",
+                "environmental_detail": "una niebla dorada se aferra a las torres del castillo cercano",
+                "ambient_threat": "Un dragón observable en la distancia exhala humo",
+                "obstacle": "bloqueado por guardias del reino y un portazo oxidado",
             },
             "scifi": {
-                "sensory_detail": [
-                    "el zumbido constante de los reactores y el aire reciclado",
-                    "neón parpadeante reflejándose en superficies de titanio",
-                    "el olor ozonizado de paneles solares y cables expuestos",
-                    "una brisa artificial recorre el pasillo principal",
-                    "pantallas holográficas muestran datos que cambian sin cesar",
-                    "el silencio tenso entre pulsos de maquinaria alienígena",
-                ],
-                "environmental_detail": [
-                    "luces LED parpadeantes iluminan los pasillos metálicos",
-                    "cables colgantes oscilan con la vibración de los motores",
-                    "una cupula translucida muestra las estrellas sobre la estacion",
-                    "modulos prefabricados se conectan por puentes presurizados",
-                    "un gran ventanal revela la inmensidad del espacio exterior",
-                ],
-                "ambient_threat": [
-                    "una alarma de sector resuena brevemente, luego se silencia",
-                    "sombras se mueven detras de paneles de vidrio polarizado",
-                    "un dron de vigilancia pasa sobre tu cabeza con un zumbido agudo",
-                ],
-                "obstacle": [
-                    "sellado por protocolo de seguridad automatico",
-                    "una esclusa hermetica requiere autorizacion biométrica",
-                    "campo de fuerza bloquea el acceso al nivel inferior",
-                ],
+                "sensory_detail": "el zumbido constante de los reactores y el aire reciclado",
+                "environmental_detail": "luces LED parpadeantes iluminan los pasillos metálicos de la estación",
+                "ambient_threat": "Una alarma de sector resuena: posible intrusión detectada",
+                "obstacle": "sellado por protocolo de seguridad de la megacorporación",
             },
             "horror": {
-                "sensory_detail": [
-                    "el olor a humedad y algo que se descompone",
-                    "goteras que caen con ritmo irregular en la oscuridad",
-                    "aire viciado que se pega a la garganta",
-                    "un frío antinatural se cuela por las grietas de la pared",
-                    "papel tapiz descolgado revela manchas oscuras debajo",
-                    "el suelo cruje bajo tus pies con cada paso cauteloso",
-                ],
-                "environmental_detail": [
-                    "sombras se mueven sin fuente de luz visible",
-                    "ventanas empañadas muestran siluetas que no deberian estar ahi",
-                    "un reloj detenido marca las 3:17 de la madrugada",
-                    "velas derretidas forman figuras ambiguas en las mesas",
-                    "un pasillo largo se pierde en la oscuridad total",
-                ],
-                "ambient_threat": [
-                    "un susurro casi inaudible viene de alguna pared",
-                    "algo se mueve rapido en el borde de tu vision",
-                    "el silencio es demasiado profundo, antinatural",
-                ],
-                "obstacle": [
-                    "la puerta no responde y algo araña el otro lado",
-                    "un pasaje se ha derrumbado, solo queda un camino oscuro",
-                    "cerrojos oxidados resisten tu intento de abrir",
-                ],
+                "sensory_detail": "el olor a humedad podrida y algo que se descompone",
+                "environmental_detail": "sombras que no deberían existir se mueven sin fuente de luz",
+                "ambient_threat": "Un susurro desde la oscuridad te llama por tu nombre",
+                "obstacle": "la puerta no responde y algo araña el otro lado",
             },
             "zombie": {
-                "sensory_detail": [
-                    "el hedor de carne en descomposicion y polvora humeda",
-                    "aire pesado que se carga con cada respiracion",
-                    "el chirriar de un cartel metálicoBalanceándose en el viento",
-                    "charcos turbios reflejan un cielo gris sin vida",
-                    "el eco lejano de algo que se arrastra por el asfalto",
-                ],
-                "environmental_detail": [
-                    "calles vacias con vidrios rotos y senales de panico",
-                    "vehiculos abandonados forman una barricada improvisada",
-                    "graffiti de socorro cubre los muros de los edificios",
-                    "un autobus volcado bloquea la interseccion principal",
-                    "telarañas de trafico se extienden hasta donde alcanza la vista",
-                ],
-                "ambient_threat": [
-                    "gemidos lejanos de los muertos vagan entre los escombros",
-                    "una sombra se mueve entre los autos abandonados",
-                    "el viento arrastra algo que se arrastra con dificultad",
-                ],
-                "obstacle": [
-                    "la ruta esta bloqueada por escombros y cadaveres",
-                    "un grupo de infectados merodea la zona",
-                    "la barrera improvisada tiene un hueco peligroso",
-                ],
+                "sensory_detail": "el hedor de carne en descomposición y pólvora húmeda",
+                "environmental_detail": "calles vacías con车窗 rotos y señales de pánico masivo",
+                "ambient_threat": "Los gemidos de los muertos vivientes se acercan",
+                "obstacle": "la ruta está bloqueada por cadáveres y escombros",
             },
             "pirates": {
-                "sensory_detail": [
-                    "sal marina en el aire y madera humeda del barco",
-                    "el crujir de cuerdas y el balanceo del casco",
-                    "aire cargado con olor a brea y canela de las bodegas",
-                    "el sol brutal golpea la cubierta de madera",
-                    "espuma salada salpica tu rostro con cada ola",
-                ],
-                "environmental_detail": [
-                    "el muelle cruje bajo tus pies mientras gaviotas gritan",
-                    "velas ensuciadas por la sal se inflan con el viento",
-                    "una bandera pirata ondea en la torre de vigia",
-                    "el horizonte se extiende infinito sobre el azul del mar",
-                    "palmeras se balancean en la playa cercana",
-                ],
-                "ambient_threat": [
-                    "un velero negro aparece en el horizonte",
-                    "gritos de un avistamiento llegan desde la cofa",
-                    "un tiburón sigue el barco desde las profundidades",
-                ],
-                "obstacle": [
-                    "una flota de la armada patrulla el canal",
-                    "un arrecife oculto amenaza con rasgar el casco",
-                    "el viento ha muerto, las velas cuelgan inertes",
-                ],
+                "sensory_detail": "sal marina en el aire y madera húmeda del barco",
+                "environmental_detail": "el muelle cruje bajo tus pies mientras gaviotas gritan",
+                "ambient_threat": "Un cañonazo distante sacude el puerto",
+                "obstacle": " patrullan barcos de la marina real",
             },
         }
-        genre_lists = genre_defaults.get(genre, genre_defaults["fantasy"])
-        defaults = {k: _rand.choice(v) for k, v in genre_lists.items()}
+        defaults = genre_defaults.get(genre, genre_defaults["fantasy"])
 
         # ── Core context ─────────────────────────────────────────────────────
         context: dict = {
@@ -659,9 +481,9 @@ class NarrativeGenerator:
             "starting_location_desc": starting_location_desc,
         }
 
-        # ── Apply lore overrides (keep variety) ────────────────────────────
+        # ── Apply lore overrides ───────────────────────────────────────────
         if starting_location_desc:
-            # Only use as environmental context, preserve sensory variety
+            context["sensory_detail"] = starting_location_desc
             context["environmental_detail"] = starting_location_desc
         if main_threat:
             context["ambient_threat"] = f"La presencia de {main_threat} se siente cerca"
@@ -674,9 +496,6 @@ class NarrativeGenerator:
                 "location", "speaker", "defender", "attacker",
                 "npc_name", "damage", "dc", "roll", "skill_name",
                 "hit", "nat_20", "nat_1",  # dice resolution
-                "player_action", "action_description",  # player input for LLM
-                "character_mood", "first_words", "gesture", "speech_descriptor",
-                "speaker_action", "tension_point", "opening_line",
             ]:
                 context[key] = value
 
@@ -1176,46 +995,27 @@ R5 — Tono y estilo de mesa:
   - 2-4 oraciones máximo
   - Terminá SIEMPRE con una situación abierta (nunca con signo de pregunta)
   - Sin descripciones de tiradas de dados
-  - Narrativa inmersiva y cinematográfica
-  - VARIÁ la estructura de apertura: no siempre empieces con "El lugar se extiende ante ti"
-    Ejemplos de aperturas alternas:
-    * Acción: "Te acercás sigilosamente..."
-    * Sensación: "El frío te golpea de lleno..."
-    * NPC: "'No esperaba verte aquí', dice Vorn..."
-    * Misterio: "Algo no cuadna en este lugar..."
-    * Tiempo: "La noche ha caído sobre el campamento..."
-    * Emoción: "Sentís el peso de la decisión en tus hombros..."
-  - NUNCA repitas la misma estructura de apertura 2 veces seguidas"""
+  - Narrativa inmersiva y cinematográfica"""
 
         # ── Few-shot examples (2-3 pairs) ──────────────────────────────────
         if genre == "fantasy":
             few_shot = """
-Ejemplos (VARÍA la estructura de apertura — no siempre empieces con el ambiente):
+Ejemplos:
 
 Input: EXPLORATION en taberna fantasy, NPCs: Vorn (capitán guardián, seco, guarda secreto)
-Output: "Vorn te mira de reojo desde su rincón, la mano sobre la empuñadura.
-'¿Otro que busca problemas?' susurra. La chimenea crepita. Algo en su mirada te dice que
-sabe más de lo que dice. La taberna huele a cerveza vieja y secretos."
+Output: "El fuego de la chimenea proyecta sombras danzantes sobre las paredes de piedra.
+Vorn te observa desde su rincón habitual, la mano apoyada sobre la empuñadura de su espada.
+Alguien susurra tu nombre desde la barra."
 
 Input: COMBAT contra dragón, jugador eligió atacar
-Output: "Tu espada encuentra un punto entre las escamas. El dragón ruge — no de dolor,
-sino de sorpresa. Nadie le había hecho eso antes. La heat del aliento te golpea como un muro.
+Output: "El dragón exhala una ráfaga de fuego. La heat te golpea como un muro.
+Tu espada encuentra un punto entre las escamas — daño sólido. El dragón ruge y se tambalea.
 Quedan 2 rondas antes de que la estructura colapse."
 
 Input: DIALOGUE con mercader elfo, jugador negocia
-Output: "'¿En serio?' La elfa ni siquiera levanta la vista de su merchandise.
-'Sabés cuánto me costó traer esto desde las Tierras Muertas.'
-Una pausa calculada. 'Pero bueno... vos parecés alguien que sabe valorar las cosas.'"
-
-Input: EXPLORATION en templo antiguo, sin NPCs
-Output: "Algo no cuadna aquí. Las antorchas están encendidas pero no hay nadie.
-El aire huele a incienso quemado hace poco. En algún lugar, agua gotea con ritmo constante.
-Si alguien estuvo aquí, se fue hace minutos."
-
-Input: DIALOGUE con NPC hostil, jugador intimidar
-Output: "El guardia se ríe. Una risa corta, sin gracia.
-'¿Intimidado, decís?' Se inclina hacia adelante, su armadura chirriando.
-'¿Cuál es tu verdadera pregunta?' Te study con la calma de alguien que ya ganó."
+Output: "La elfa inclina la cabeza, sus ojos dorados evaluándote.
+'Ofrecés menos de lo que vale mi mercancía', dice con una sonrisa que no llega a sus ojos.
+'Tomás o te vas.' Un cliente habitual le entrega una bolsa de monedas sin regatear."
 """
         elif genre == "scifi":
             few_shot = """
@@ -1269,7 +1069,7 @@ El resultado cambia el momentum del enfrentamiento."
 Input: DIALOGUE con NPC
 Output: "{speaker} te mira fijamente. '¿Realmente querés saber la respuesta?'
 El silencio se extiende. Lo que digas ahora puede cambiar todo."
-""".format(location=location, npcs=npcs if npcs else "El grupo está solo.", speaker=context.get("speaker", "Una voz emerge"))
+""".format(location=location, npcs=npcs if npcs else "El grupo está solo.")
 
         # ── Active quests para hilo conductor ───────────────────────────────────────
         quests = state.get("quests", {}) if hasattr(state, "get") else {}
@@ -1291,11 +1091,6 @@ El silencio se extiende. Lo que digas ahora puede cambiar todo."
         char_details = context.get("character_details", {})
         backstory_str = f"\nProtagonista: {char_details.get('backstory', 'Un aventurero')}" if char_details.get("backstory") else ""
         secrets_str = f" | Secreto: {char_details['secrets']}" if char_details.get("secrets") else ""
-
-        # ── P4: World flags for coherence gating ──────────────────────────
-        world_flags = state.get("world_flags", {}) if hasattr(state, "get") else {}
-        import json as _json
-        world_flags_json = _json.dumps(world_flags, ensure_ascii=False, indent=2) if world_flags else "{}"
 
         # ── Dice resolution result ──────────────────────────────────────────
         roll = context.get("roll", 0)
@@ -1320,13 +1115,7 @@ El silencio se extiende. Lo que digas ahora puede cambiar todo."
         else:
             dice_result_block = ""
 
-        # ── P4: DM Coherence Instructions ────────────────────────────
-        coherence_block = DM_COHERENCE_INSTRUCTIONS.format(
-            world_flags_json=world_flags_json
-        )
-
         user_prompt = (
-            coherence_block + "\n" +
             f"** HermesDM — Generador de escenas D&D 5e **\n\n"
             f"{constraints}\n"
             f"{few_shot}\n"

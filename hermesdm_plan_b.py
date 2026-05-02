@@ -71,112 +71,6 @@ TARGET_CHAT_ID = -1003916745496  # Dungeons and dragons test
 
 
 # ------------------------------------------------------------------
-# Handler de /j — copia del _j_action_handler pero broadcast
-# ------------------------------------------------------------------
-
-async def j_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle /j <action> en el grupo — Plan B async.
-    Reemplaza reply_text por send_message al grupo objetivo.
-    """
-    try:
-        text = update.message.text or ""
-        if not text.startswith("/act "):
-            return
-
-        action_text = text[5:].strip()
-        if not action_text:
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                text="⚠️ Uso: /j <tu acción>\nEjemplo: /j Ataco al dragón",
-            )
-            return
-
-        chat_data = context.chat_data
-        cs: ChatState = chat_data.get("_hermes_state", ChatState())
-
-        if not cs.active_campaign:
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                text="⚠️ No hay campaña activa. Usa /newgame para empezar.",
-            )
-            return
-
-        # Buscar personaje del jugador
-        sender_name = update.effective_user.first_name or ""
-        char = cs.character_for(sender_name)
-        if char is None:
-            for key, c in cs.characters.items():
-                if sender_name.lower() in c.name.lower() or c.name.lower() in sender_name.lower():
-                    char = c
-                    break
-
-        if char is None:
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                text=f"⚠️ No encontré personaje para '{sender_name}'.\nUsa /join para registrarte.",
-            )
-            return
-
-        # Cargar state
-        state = load_state(cs.active_campaign) or {"campaign": {}, "characters": {}, "npcs": {}}
-
-        # Route
-        router = ActionRouter(state=state, character=char)
-        result = router.route(update, action_text)
-
-        # Determinar tipo de acción para formato
-        action_lower = action_text.lower()
-        is_attack = any(k in action_lower for k in ["atac", "golpe", "espada", "arco", "strike", "hit", "attack"])
-        is_cast = any(k in action_lower for k in ["lanz", "hechiz", "magi", "spell", "cast"])
-        is_social = any(k in action_lower for k in ["intimidar", "persuadir", "engañar", "amenazar", "intimidate", "persuade", "deceive"])
-        is_knowledge = any(k in action_lower for k in ["historia", "religion", "arcano", "investigar", "medicina", "supervivencia", "history", "arcana", "investigate", "medicine", "survival"])
-        is_physical = any(k in action_lower for k in ["esquivar", "correr", "esconderse", "ayudar", "empujar", "disengage", "dash", "hide", "help", "shove", "dodge", "desenganchar", "escabullirse"])
-        is_heal = any(k in action_lower for k in ["cur", "san", "heal", "restaur"])
-
-        if is_attack:
-            prefix = "⚔️"
-            reply = f"{prefix} *{char.name} ataca*\n/j {action_text}\n──────────────────────\n{result.mechanic_inline}\n──────────────────────\n📖 {result.narrative}"
-        elif is_cast:
-            prefix = "✨"
-            reply = f"{prefix} *{char.name} lanza un hechizo*\n/j {action_text}\n──────────────────────\n{result.mechanic_inline}\n──────────────────────\n📖 {result.narrative}"
-        elif is_heal:
-            prefix = "💚"
-            from bot.dice_engine import roll as _roll_dice_h
-            heal = _roll_dice_h("1d8+2")["total"]
-            reply = f"{prefix} *{char.name} canaliza energía curativa*\n/j {action_text}\n──────────────────────\n✨ HP restaurado: *+{heal}*\n──────────────────────\n📖 {result.narrative}"
-        elif is_social:
-            prefix = "🎭"
-            reply = f"{prefix} *{char.name} interactúa*\n/j {action_text}\n──────────────────────\n{result.mechanic_inline}\n──────────────────────\n📖 {result.narrative}"
-        elif is_knowledge:
-            prefix = "📚"
-            reply = f"{prefix} *{char.name} recuerda*\n/j {action_text}\n──────────────────────\n{result.mechanic_inline}\n──────────────────────\n📖 {result.narrative}"
-        elif is_physical:
-            prefix = "🏃"
-            reply = f"{prefix} *{char.name} se mueve*\n/j {action_text}\n──────────────────────\n{result.mechanic_inline}\n──────────────────────\n📖 {result.narrative}"
-        else:
-            prefix = "🎲"
-            reply = f"{prefix} *{char.name} intenta {action_text}*\n/j {action_text}\n──────────────────────\n{result.mechanic_inline}\n──────────────────────\n📖 {result.narrative}"
-
-        await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            text=reply,
-            parse_mode="Markdown",
-        )
-
-    except Exception as e:
-        log.exception("j_action_handler error")
-        try:
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                text=f"Error: {e}",
-            )
-        except Exception:
-            pass
-
-
-# ------------------------------------------------------------------
-# App builder separado para Plan B
 # ------------------------------------------------------------------
 
 def build_plan_b_app() -> Application:
@@ -218,7 +112,6 @@ def build_plan_b_app() -> Application:
     app.add_handler(CommandHandler("me", cmd_me, filters=group_filter))
 
     # Setup text handler — intercepta texto del DM durante flujo de setup
-    # Debe ir ANTES de j_action_handler (que matched todo TEXT)
     app.add_handler(MessageHandler(
         filters.TEXT & filters.ChatType.SUPERGROUP & filters.Chat(chat_id=TARGET_CHAT_ID),
         _handle_setup_text,
@@ -227,7 +120,6 @@ def build_plan_b_app() -> Application:
     # /j <accion> — acción libre narrada
     app.add_handler(MessageHandler(
         filters.TEXT & filters.ChatType.SUPERGROUP & filters.Chat(chat_id=TARGET_CHAT_ID),
-        j_action_handler,
     ))
 
     return app

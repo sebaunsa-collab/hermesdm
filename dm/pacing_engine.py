@@ -11,6 +11,7 @@ recent history, and player actions to decide:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
+from dataclasses import dataclass
 
 from dm.narrative_generator import SceneType
 from dm.story_arc import StoryArc
@@ -21,13 +22,15 @@ if TYPE_CHECKING:
 
 # Thresholds for loop detection
 _LOOP_CONFIG = {
-    "same_type_threshold": 3,       # N scenes of same type → force change
-    "exploration_without_beat": 5,  # N explorations without story beat → force beat
-    "combat_chain_threshold": 3,    # N combats in a row → force rest/dialogue
-    "dialogue_chain_threshold": 4,  # N dialogues in a row → force action
+    "same_type_threshold": 6,       # N scenes of same type → force change
+    "exploration_without_beat": 10, # N explorations without story beat → force beat
+    "combat_chain_threshold": 4,    # N combats in a row → force rest/dialogue
+    "dialogue_chain_threshold": 8,  # N dialogues in a row → force action
 }
 
 # SceneType preferences by milestone type
+
+
 _MILESTONE_SCENE_PREFERENCES = {
     "hook": [SceneType.EXPLORATION, SceneType.DIALOGUE, SceneType.STORY_BEAT],
     "rising_action": [SceneType.EXPLORATION, SceneType.COMBAT, SceneType.DIALOGUE, SceneType.STORY_BEAT],
@@ -37,6 +40,37 @@ _MILESTONE_SCENE_PREFERENCES = {
 }
 
 
+
+
+# ── Scene Director helpers ────────────────────────────────────────────────
+
+def get_milestone_tier(state: dict) -> int:
+    """Get milestone tier (1-3) from state for encounter difficulty scaling."""
+    story = state.get("story_arc", {})
+    milestones = story.get("milestones", [])
+    if not milestones:
+        return 1
+    current = story.get("current_milestone", 0)
+    total = len(milestones)
+    if total <= 0:
+        return 1
+    progress = current / max(total, 1)
+    if progress > 0.66:
+        return 3
+    if progress > 0.33:
+        return 2
+    return 1
+
+
+def get_scene_count(state: dict) -> int:
+    """Get current scene count from state."""
+    return state.get("scene_count", 0)
+
+
+def get_turns_since_encounter(state: dict) -> int:
+    """Get turns since last encounter from state."""
+    return state.get("turns_since_encounter", 0)
+
 class PacingEngine:
     """
     Narrative director that prevents loops and ensures story progression.
@@ -45,10 +79,128 @@ class PacingEngine:
     def __init__(self, story_arc: StoryArc, history: Optional[list[dict]] = None) -> None:
         self.arc = story_arc
         self.history = history or []
+        self.scenes_since_main_threat = 0  # Track scenes since last main threat callback
 
     # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
+
+    def reset_scenes_since_main_threat(self) -> None:
+        """Reset the main threat scene counter. Call when narrative references the main threat."""
+        self.scenes_since_main_threat = 0
+
+    def should_inject_event(self) -> bool:
+        """
+        Determine if a GM event should be injected to move the plot forward.
+        
+        Returns True when:
+        - milestone_pressure >= 0.7 (high pressure toward milestone)
+        - scene_count >= max_scenes - 1 (approaching scene limit)
+        """
+        cm = self.arc.current_milestone
+        if not cm:
+            return False
+        
+        # Calculate current milestone pressure
+        pressure = self._get_milestone_pressure(cm)
+        
+        if pressure >= 0.7:
+            return True
+        if cm.scene_count >= cm.max_scenes - 1:
+            return True
+        return False
+    
+    def _get_milestone_pressure(self, cm) -> float:
+        """Calculate current milestone pressure (0.0-1.0)."""
+        if cm.max_scenes <= cm.min_scenes:
+            return 0.5
+        pressure = (cm.scene_count - cm.min_scenes) / (cm.max_scenes - cm.min_scenes)
+        return max(0.0, min(1.0, pressure))
+    
+    def update_pressure(self, action_type: str, success: bool, was_roll: bool) -> None:
+        """
+        Update milestone pressure based on player actions.
+        
+        - Progress toward milestone: milestone_pressure -= 0.2
+        - Failed roll: milestone_pressure += 0.1
+        - Time passing: milestone_pressure += 0.05
+        - scene_count >= max_scenes: milestone_pressure = min(1.0, milestone_pressure + 0.15)
+        """
+        cm = self.arc.current_milestone
+        if not cm:
+            return
+        
+        # Get current pressure
+        pressure = self._get_milestone_pressure(cm)
+        
+        # Adjust based on action
+        if success and was_roll:
+            # Successful roll that advances the plot
+            pressure -= 0.2
+        elif was_roll and not success:
+            # Failed roll creates tension
+            pressure += 0.1
+        else:
+            # Time passing / neutral action
+            pressure += 0.05
+        
+        # Scene limit pressure
+        if cm.scene_count >= cm.max_scenes:
+            pressure = min(1.0, pressure + 0.15)
+        
+        # Update milestone's scene_count as proxy for pressure
+        # (We don't have a separate milestone_pressure field on Milestone,
+        # so we rely on scene_count calculations)
+        # Just record the scene
+        self.arc.record_scene(action_type if action_type else "unknown")
+        
+        # Track scenes since main threat
+        self.scenes_since_main_threat += 1
+    
+    def get_event_context(self) -> dict:
+        """
+        Get event injection context for the narrative generator.
+        
+        Returns dict with:
+        - inject_event: bool
+        - event_types: list of event type suggestions
+        - milestone_objective: str
+        - main_threat: str
+        - milestone_pressure: float
+        """
+        if not self.should_inject_event():
+            return {"inject_event": False}
+        
+        cm = self.arc.current_milestone
+        if not cm:
+            return {"inject_event": False}
+        
+        return {
+            "inject_event": True,
+            "event_types": [
+                "gm_event",      # Generic GM-driven event
+                "arrival",       # NPC or creature arrives
+                "environmental", # Weather, environment changes
+                "revelation",    # Truth is revealed
+                "complication",  # Existing situation worsens
+                "callback",      # Callback to earlier events
+                "time_pressure", # Time deadline approaches
+            ],
+            "milestone_objective": cm.description,
+            "main_threat": self._get_main_threat(),
+            "milestone_pressure": self._get_milestone_pressure(cm),
+            "force_callback": self.scenes_since_main_threat >= 3,
+            "callback_reason": "Main threat reminder" if self.scenes_since_main_threat >= 3 else None,
+        }
+    
+    def _get_main_threat(self) -> str:
+        """Get the main threat description from the campaign."""
+        if self.arc.current_milestone:
+            desc = self.arc.current_milestone.description
+            # Extract first sentence as main threat
+            if desc:
+                return desc.split(".")[0] if "." in desc else desc[:80]
+        return ""
 
     def get_next_scene_type(
         self,
@@ -121,24 +273,47 @@ class PacingEngine:
 
         # Hard cap: max scenes reached
         if cm.scene_count >= cm.max_scenes:
+            # Milestone about to advance - update pressure for milestone completion
+            self.update_pressure("milestone_complete", success=True, was_roll=False)
+            self.scenes_since_main_threat = 0  # Reset: new milestone = new threat context
+            # ── P3: Set world_flag for milestone completion ──────────────
+            self._set_milestone_flag(cm)
             return True
 
         # Soft cap: min scenes reached, check if narrative signals progress
         if cm.scene_count >= cm.min_scenes:
             if self._narrative_signals_progress(narrative_text):
+                # Milestone advancing due to progress - positive pressure adjustment
+                self.update_pressure("progress", success=True, was_roll=False)
+                self.scenes_since_main_threat = 0  # Reset: new milestone = new threat context
+                # ── P3: Set world_flag for milestone completion ──────────
+                self._set_milestone_flag(cm)
                 return True
 
         return False
 
+    def _set_milestone_flag(self, cm) -> None:
+        """Set world_flag for milestone completion (Phase 3 gate)."""
+        try:
+            from state.state_manager import load_state, save_state
+            state_data = getattr(self.arc, '_state', None)
+            if state_data is None:
+                return
+            campaign_id = state_data.get("campaign", {}).get("id")
+            if not campaign_id:
+                return
+            flag_name = f"milestone_{cm.id}_complete" if hasattr(cm, 'id') else f"milestone_complete"
+            state = load_state(campaign_id)
+            if state is None:
+                return
+            state.setdefault("world_flags", {})[flag_name] = True
+            save_state(campaign_id, state)
+        except Exception:
+            pass  # Non-critical — world_flags is additive
+
     def get_milestone_context(self) -> dict:
         """Return context for the narrative generator."""
         return self.arc.get_milestone_context()
-
-    def get_narrative_prompt_addition(self) -> str:
-        """Extra prompt text to inject into the LLM."""
-        ctx = self.arc.get_milestone_context()
-        if ctx.get("campaign_complete"):
-            return "La campaña ha llegado a su fin. Narrá el epílogo final."
 
         cm = self.arc.current_milestone
         if not cm:
@@ -276,21 +451,26 @@ class PacingEngine:
 
     def _narrative_signals_progress(self, narrative_text: str) -> bool:
         """
-        Heuristic: does the narrative text suggest milestone progress?
+        Heuristic: does the narrative text suggest ACTUAL milestone progress?
 
-        Looks for keywords that indicate revelation, advancement, or completion.
+        Only triggers on STRONG signals that indicate quest/story resolution,
+        NOT on generic exploration keywords.
         """
         text_lower = narrative_text.lower()
 
-        progress_signals = [
-            "descubr", "revel", "encuentr", "encuentras", "aparece",
-            "llegas a", "logras", "consigues", "finalmente", "por fin",
-            "la verdad", "el secreto", "la puerta se abre", "el camino",
-            "discover", "reveal", "find", "finally", "the truth",
-            "door opens", "path ahead", "way forward",
+        # STRONG signals: these indicate real story progression
+        strong_signals = [
+            "la verdad es que", "el secreto es", "la puerta se abre",
+            "has resuelto", "has completado", "has derrotado al",
+            "el jefe ha caido", "la mision se completa",
+            "has encontrado la", "has descubierto la verdad",
+            "el ancient", "the ancient", "the truth is",
+            "you have defeated", "quest complete", "mission complete",
         ]
 
-        return any(sig in text_lower for sig in progress_signals)
+        # Only count if at least 2 strong signals appear
+        matches = sum(1 for sig in strong_signals if sig in text_lower)
+        return matches >= 2
 
 
 # ---------------------------------------------------------------------------
